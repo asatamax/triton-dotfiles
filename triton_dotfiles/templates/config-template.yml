@@ -1,0 +1,159 @@
+# Triton Dotfiles Configuration Template
+#
+# This template provides a starting point for your configuration.
+# Customize it to match your needs, then place it at:
+#   ~/.config/triton/config.yml
+#
+# Quick Start:
+#   1. triton init config --global-config
+#   2. triton init key
+#   3. triton backup
+#
+# Managing Configuration:
+#   triton config target add ~/.docker -r        # Add recursive target
+#   triton config target add ~/ -f ".zshrc"      # Add specific files
+#   triton config exclude add "*.log"            # Add exclude pattern
+#   triton config encrypt add "*.pem"            # Add encrypt pattern
+#   triton config hook add "brew bundle dump..." # Add startup hook
+#   triton config show                           # Show current config
+#   triton config validate                       # Validate configuration
+
+config:
+  # ============================================================
+  # General Settings
+  # ============================================================
+  # Maximum file size to backup (MB). Files larger than this are skipped.
+  # Set to 0 for no limit.
+  max_file_size_mb: 3
+
+  # ============================================================
+  # Repository Settings
+  # ============================================================
+  repository:
+    # Where to store backups (supports environment variables)
+    path: ~/dotfiles-repo
+    # Use machine hostname as subdirectory
+    use_hostname: true
+    # Auto-pull on TUI startup (set false to disable)
+    auto_pull: true
+
+  # ============================================================
+  # Backup Targets
+  # ============================================================
+  # Pattern syntax:
+  #   - "**/*"           : All files recursively
+  #   - "!pattern"       : Exclude (must come after include)
+  #   - "*.ext"          : Glob pattern
+  #   - "${VAR:-default}": Environment variable with fallback
+  #
+  # Add targets via CLI:
+  #   triton config target add <path> [-r] [-f "file1,file2"]
+  targets:
+    # --- Shell & Terminal ---
+    - path: ~/
+      files:
+        - .zshrc
+        - .zshenv
+        - .zprofile
+        - .bashrc
+        - .bash_profile
+        - .vimrc
+        - .gitconfig
+        - .tmux.conf
+
+    # --- SSH (auto-encrypted) ---
+    - path: ~/.ssh
+      files: ["**/*"]
+      recursive: true
+
+    # --- Cloud Credentials (auto-encrypted) ---
+    - path: ~/.aws
+      files: ["**/*"]
+      recursive: true
+
+    # --- Git Global Ignore ---
+    - path: ~/.config/git
+      files: [ignore]
+
+    # --- Triton's own config (exclude archives) ---
+    - path: ~/.config/triton
+      files:
+        - "**/*"
+        - "!archives/**"
+      recursive: true
+
+    # --- Target-specific encryption example ---
+    # - path: ~/.m2
+    #   files: [settings.xml]
+    #   encrypt_files: [settings.xml]
+
+    # --- Environment variable target (skipped if undefined) ---
+    # - path: ${PROJECT_DIR:-~/skip-if-not-defined}
+    #   files: ["**/*"]
+    #   recursive: true
+
+  # ============================================================
+  # Global Exclude Patterns
+  # ============================================================
+  # Files matching these patterns are never backed up.
+  # Add patterns via CLI: triton config exclude add "*.log"
+  blacklist:
+    - .DS_Store
+    - "*.log"
+    - "*.tmp"
+    - "*.bak"
+    - "*~"
+    - ".*.swp"
+    - "*.cache"
+    - "*.pid"
+    - "*.lock"
+
+  # ============================================================
+  # Encryption Settings
+  # ============================================================
+  encryption:
+    enabled: true
+    key_file: ~/.config/triton/master.key
+
+  # Files matching these patterns are automatically encrypted.
+  # Add patterns via CLI: triton config encrypt add "*.pem"
+  encrypt_list:
+    # SSH keys
+    - "id_rsa*"
+    - "id_ed25519*"
+    - "id_ecdsa*"
+    # Certificates & keys
+    - "*.pem"
+    - "*.crt"
+    - "*.key"
+    - "*.p12"
+    - "*.pfx"
+    # Cloud credentials
+    - credentials
+    - "sso/cache/*"
+    # Sensitive patterns
+    - "*secret*"
+    - "*password*"
+    - "*token*"
+
+  # ============================================================
+  # TUI Settings
+  # ============================================================
+  tui:
+    theme: nord
+    hide_system_files: true
+    system_file_patterns:
+      - .DS_Store
+      - "._*"
+      - Thumbs.db
+      - desktop.ini
+
+  # ============================================================
+  # Startup Hooks
+  # ============================================================
+  # Commands executed on TUI startup (before auto-pull).
+  # Add hooks via CLI: triton config hook add "command"
+  # hooks:
+  #   timeout: 30
+  #   on_startup:
+  #     - brew bundle dump --file=~/.config/triton/Brewfile --force
