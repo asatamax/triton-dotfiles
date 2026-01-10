@@ -228,7 +228,7 @@ def restore(ctx, source_machine, target, files, dry_run):
 
         if source_machine not in available_machines:
             click.echo(
-                f"{Fore.RED}Error:Machine '{source_machine}' not found{Style.RESET_ALL}"
+                f"{Fore.RED}Error: Machine '{source_machine}' not found{Style.RESET_ALL}"
             )
             click.echo(f"Available machines: {', '.join(available_machines)}")
             return
@@ -310,7 +310,7 @@ def export(ctx, source_machine, file_pattern, output_path, no_decrypt, dry_run):
 
         if source_machine not in available_machines:
             click.echo(
-                f"{Fore.RED}Error:Machine '{source_machine}' not found{Style.RESET_ALL}"
+                f"{Fore.RED}Error: Machine '{source_machine}' not found{Style.RESET_ALL}"
             )
             click.echo(f"Available machines: {', '.join(available_machines)}")
             return
@@ -748,7 +748,7 @@ def git_commit_push(ctx, machine, dry_run, yes):
 
         if not dry_run and not yes:
             click.echo(
-                f"{Fore.YELLOW}Warning:This will commit and push changes to the remote repository.{Style.RESET_ALL}"
+                f"{Fore.YELLOW}Warning: This will commit and push changes to the remote repository.{Style.RESET_ALL}"
             )
             click.echo("This action cannot be easily undone.")
             if not click.confirm("Continue?"):
@@ -780,7 +780,7 @@ def git_commit_push(ctx, machine, dry_run, yes):
             if result.get("need_pull", False):
                 click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
                 click.echo(
-                    f"{Fore.YELLOW}Warning:The remote repository has newer changes.{Style.RESET_ALL}"
+                    f"{Fore.YELLOW}Warning: The remote repository has newer changes.{Style.RESET_ALL}"
                 )
                 click.echo("Please run 'triton pull' first to get the latest changes.")
                 if result.get("commits_behind", 0) > 0:
@@ -820,11 +820,11 @@ def tui(ctx, skip_startup):
 
         run_textual_tui(skip_startup=skip_startup)
     except ImportError as e:
-        click.echo(f"{Fore.RED}Error:Textual TUI not available: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: Textual TUI not available: {e}{Style.RESET_ALL}")
         click.echo("Install textual dependencies with: uv sync --extra tui")
         sys.exit(1)
     except Exception as e:
-        click.echo(f"{Fore.RED}Error:TUI Error: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: TUI Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
 
@@ -882,7 +882,7 @@ def cleanup_repository(ctx, machine, dry_run):
         # Confirmation prompt (not needed for dry-run)
         if not dry_run:
             click.echo(
-                f"\n{Fore.YELLOW}Warning:This will delete orphaned files from repository{Style.RESET_ALL}"
+                f"\n{Fore.YELLOW}Warning: This will delete orphaned files from repository{Style.RESET_ALL}"
             )
             click.echo(f"Machine: {Fore.CYAN}{target_machine}{Style.RESET_ALL}")
             click.echo(
@@ -946,7 +946,7 @@ def cleanup_repository(ctx, machine, dry_run):
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
     except Exception as e:
-        click.echo(f"{Fore.RED}Error:Unexpected error: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: Unexpected error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
 
@@ -1016,7 +1016,7 @@ def hooks_run(ctx, dry_run):
             click.echo(f"\n{result['summary']}")
 
     except FileNotFoundError:
-        click.echo(f"{Fore.RED}Error:Config file not found{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: Config file not found{Style.RESET_ALL}")
         sys.exit(1)
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -1090,7 +1090,7 @@ def config_view(ctx):
 
         if not config_path.exists():
             click.echo(
-                f"{Fore.RED}Error:Config file not found: {config_path}{Style.RESET_ALL}"
+                f"{Fore.RED}Error: Config file not found: {config_path}{Style.RESET_ALL}"
             )
             sys.exit(1)
 
@@ -2017,7 +2017,7 @@ def target_remove(ctx, path, no_backup, yes):
         target = config_manager.find_target_by_path(normalized)
         if not target:
             click.echo(
-                f"{Fore.RED}Error:Target {normalized} not found{Style.RESET_ALL}"
+                f"{Fore.RED}Error: Target {normalized} not found{Style.RESET_ALL}"
             )
             sys.exit(1)
 
@@ -2411,7 +2411,7 @@ def archive_show(timestamp, as_json):
             archive_type = "restore"
 
     if not archive_path:
-        click.echo(f"{Fore.RED}Error:Archive not found: {timestamp}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: Archive not found: {timestamp}{Style.RESET_ALL}")
         click.echo("Use 'triton archive list' to see available archives.")
         sys.exit(1)
 
@@ -2495,7 +2495,7 @@ def archive_clean(keep, older_than_days, archive_type, dry_run, force):
 
     if keep is None and older_than_days is None:
         click.echo(
-            f"{Fore.RED}Error:Please specify --keep or --older-than{Style.RESET_ALL}"
+            f"{Fore.RED}Error: Please specify --keep or --older-than{Style.RESET_ALL}"
         )
         click.echo("Examples:")
         click.echo("  triton archive clean --keep 5          # Keep 5 most recent")
@@ -2578,7 +2578,7 @@ def archive_clean(keep, older_than_days, archive_type, dry_run, force):
             deleted_count += 1
         except Exception as e:
             click.echo(
-                f"{Fore.RED}Error:Failed to delete {archive['timestamp']}: {e}{Style.RESET_ALL}"
+                f"{Fore.RED}Error: Failed to delete {archive['timestamp']}: {e}{Style.RESET_ALL}"
             )
 
     click.echo(
@@ -2591,9 +2591,9 @@ if __name__ == "__main__":
         cli()
     except KeyboardInterrupt:
         click.echo(
-            f"\n{Fore.YELLOW}Warning:Operation cancelled by user{Style.RESET_ALL}"
+            f"\n{Fore.YELLOW}Warning: Operation cancelled by user{Style.RESET_ALL}"
         )
         sys.exit(1)
     except Exception as e:
-        click.echo(f"{Fore.RED}Error:Unexpected error: {e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: Unexpected error: {e}{Style.RESET_ALL}")
         sys.exit(1)

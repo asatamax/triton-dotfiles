@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-統一ファイル比較・重複検知マネージャー
+Unified file comparison and duplicate detection manager.
 """
 
 import os
@@ -12,24 +12,26 @@ from enum import Enum
 
 
 class ComparisonMethod(Enum):
-    """ファイル比較手法"""
+    """File comparison methods."""
 
-    BINARY = "binary"  # バイナリ完全一致
-    HASH = "hash"  # SHA256ハッシュ比較
-    COMPREHENSIVE = "comprehensive"  # ハッシュ + 暗号化対応
+    BINARY = "binary"  # Binary exact match
+    HASH = "hash"  # SHA256 hash comparison
+    COMPREHENSIVE = "comprehensive"  # Hash + encryption support
 
 
 class DuplicateDetectionMethod(Enum):
-    """重複検知手法"""
+    """Duplicate detection methods."""
 
-    PATH_ONLY = "path_only"  # パス正規化のみ
-    INODE_ONLY = "inode_only"  # inode情報のみ
-    COMPREHENSIVE = "comprehensive"  # パス正規化 + inode + 追加後登録
+    PATH_ONLY = "path_only"  # Path normalization only
+    INODE_ONLY = "inode_only"  # Inode information only
+    COMPREHENSIVE = (
+        "comprehensive"  # Path normalization + inode + post-add registration
+    )
 
 
 @dataclass
 class FileComparisonResult:
-    """ファイル比較結果"""
+    """File comparison result."""
 
     identical: bool
     method_used: ComparisonMethod
@@ -40,7 +42,7 @@ class FileComparisonResult:
 
 @dataclass
 class DuplicateInfo:
-    """重複ファイル情報"""
+    """Duplicate file information."""
 
     normalized_path: str
     original_path: str
@@ -51,7 +53,7 @@ class DuplicateInfo:
 
 @dataclass
 class FileRelationshipAnalysis:
-    """ファイル関係分析結果"""
+    """File relationship analysis result."""
 
     exists: bool
     changed: bool
@@ -63,12 +65,12 @@ class FileRelationshipAnalysis:
 
 
 class FileComparisonManager:
-    """統一ファイル比較・重複検知マネージャー"""
+    """Unified file comparison and duplicate detection manager."""
 
     def __init__(self, encryption_manager=None):
         """
         Args:
-            encryption_manager: 暗号化マネージャー（暗号化ファイル比較用）
+            encryption_manager: Encryption manager (for encrypted file comparison).
         """
         self.encryption_manager = encryption_manager
         self._hash_cache: Dict[str, str] = {}  # パス -> ハッシュのキャッシュ
@@ -76,7 +78,7 @@ class FileComparisonManager:
         self._path_cache: Set[str] = set()  # 正規化パスのキャッシュ
 
     def clear_caches(self) -> None:
-        """キャッシュをクリア"""
+        """Clear all caches."""
         self._hash_cache.clear()
         self._inode_cache.clear()
         self._path_cache.clear()
@@ -89,16 +91,16 @@ class FileComparisonManager:
         config_manager=None,
     ) -> FileComparisonResult:
         """
-        統一ファイル比較
+        Unified file comparison.
 
         Args:
-            file1: 比較ファイル1
-            file2: 比較ファイル2
-            comparison_type: 比較手法
-            config_manager: 設定マネージャー（暗号化判定用）
+            file1: First file to compare.
+            file2: Second file to compare.
+            comparison_type: Comparison method.
+            config_manager: Config manager (for encryption detection).
 
         Returns:
-            FileComparisonResult: 比較結果
+            FileComparisonResult: Comparison result.
         """
         try:
             # ファイル存在チェック
@@ -134,7 +136,7 @@ class FileComparisonManager:
             )
 
     def _compare_binary(self, file1: Path, file2: Path) -> FileComparisonResult:
-        """バイナリ完全一致比較"""
+        """Binary exact match comparison."""
         try:
             with open(file1, "rb") as f1, open(file2, "rb") as f2:
                 identical = f1.read() == f2.read()
@@ -147,7 +149,7 @@ class FileComparisonManager:
             )
 
     def _compare_hash(self, file1: Path, file2: Path) -> FileComparisonResult:
-        """SHA256ハッシュ比較"""
+        """SHA256 hash comparison."""
         try:
             hash1 = self._calculate_file_hash(file1)
             hash2 = self._calculate_file_hash(file2)
@@ -175,7 +177,7 @@ class FileComparisonManager:
     def _compare_comprehensive(
         self, file1: Path, file2: Path, config_manager=None
     ) -> FileComparisonResult:
-        """包括的比較（暗号化ファイル対応）"""
+        """Comprehensive comparison (with encrypted file support)."""
         try:
             # 通常ファイル同士の比較
             if not file2.name.endswith(".enc"):
@@ -222,7 +224,7 @@ class FileComparisonManager:
             )
 
     def _calculate_file_hash(self, file_path: Path) -> Optional[str]:
-        """ファイルのSHA256ハッシュを計算（キャッシュ対応）"""
+        """Calculate SHA256 hash of a file (with caching)."""
         file_path_str = str(file_path)
 
         # キャッシュチェック
@@ -247,14 +249,14 @@ class FileComparisonManager:
         method: DuplicateDetectionMethod = DuplicateDetectionMethod.COMPREHENSIVE,
     ) -> Dict[str, List[DuplicateInfo]]:
         """
-        高度な重複検知
+        Advanced duplicate detection.
 
         Args:
-            file_paths: 検査対象ファイルパスのリスト
-            method: 重複検知手法
+            file_paths: List of file paths to check.
+            method: Duplicate detection method.
 
         Returns:
-            Dict: 重複グループ辞書 {group_key: [DuplicateInfo, ...]}
+            Dict: Duplicate groups {group_key: [DuplicateInfo, ...]}.
         """
         duplicates = {}
         seen_paths = set()
@@ -303,7 +305,7 @@ class FileComparisonManager:
         seen_paths: Set[str],
         seen_inodes: Set[Tuple[int, int]],
     ) -> DuplicateInfo:
-        """単一ファイルの重複分析"""
+        """Analyze single file for duplicates."""
 
         # パスを正規化
         try:
@@ -362,17 +364,17 @@ class FileComparisonManager:
         config_manager=None,
     ) -> FileRelationshipAnalysis:
         """
-        包括的ファイル関係分析
+        Comprehensive file relationship analysis.
 
         Args:
-            local_path: ローカルファイルのパス
-            backup_path: バックアップファイルのパス
-            local_mtime: ローカルファイルの変更時刻（省略時は自動取得）
-            backup_mtime: バックアップファイルの変更時刻（省略時は自動取得）
-            config_manager: 設定マネージャー（暗号化判定用）
+            local_path: Path to the local file.
+            backup_path: Path to the backup file.
+            local_mtime: Local file modification time (auto-fetched if omitted).
+            backup_mtime: Backup file modification time (auto-fetched if omitted).
+            config_manager: Config manager (for encryption detection).
 
         Returns:
-            FileRelationshipAnalysis: 分析結果
+            FileRelationshipAnalysis: Analysis result.
         """
         result = FileRelationshipAnalysis(
             exists=local_path.exists(),
@@ -414,7 +416,7 @@ class FileComparisonManager:
         return result
 
     def get_cache_stats(self) -> Dict[str, int]:
-        """キャッシュ統計を取得"""
+        """Get cache statistics."""
         return {
             "hash_cache_size": len(self._hash_cache),
             "inode_cache_size": len(self._inode_cache),

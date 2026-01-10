@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Git操作を管理するモジュール
+Module for managing Git operations.
 """
 
 import subprocess
@@ -10,33 +10,33 @@ from datetime import datetime
 
 
 class GitManager:
-    """Git操作を管理するクラス"""
+    """Manages Git operations."""
 
     def __init__(self, repo_root: Path):
         """
-        GitManagerを初期化
+        Initialize GitManager.
 
         Args:
-            repo_root: gitリポジトリのルートパス
+            repo_root: Root path of the git repository.
         """
         self.repo_root = Path(repo_root)
 
     def is_git_repository(self) -> bool:
-        """gitリポジトリかどうかを確認"""
+        """Check if the path is a git repository."""
         return (self.repo_root / ".git").exists()
 
     def is_working_directory_clean(self) -> Dict[str, Any]:
         """
-        ワーキングディレクトリがクリーンかどうかを確認
+        Check if the working directory is clean.
 
         Returns:
-            チェック結果の辞書:
-            - success: チェックが成功したかどうか
-            - is_clean: ワーキングディレクトリがクリーンかどうか
-            - has_staged: ステージされた変更があるかどうか
-            - has_unstaged: ステージされていない変更があるかどうか
-            - has_untracked: 未追跡ファイルがあるかどうか
-            - message: 状態の説明メッセージ
+            Dictionary with check results:
+            - success: Whether the check succeeded.
+            - is_clean: Whether the working directory is clean.
+            - has_staged: Whether there are staged changes.
+            - has_unstaged: Whether there are unstaged changes.
+            - has_untracked: Whether there are untracked files.
+            - message: Status description message.
         """
         if not self.repo_root.exists():
             return {
@@ -139,13 +139,13 @@ class GitManager:
 
     def pull_repository(self, dry_run: bool = False) -> Dict[str, Any]:
         """
-        リポジトリでgit pullを実行
+        Execute git pull on the repository.
 
         Args:
-            dry_run: ドライランモード
+            dry_run: Dry run mode.
 
         Returns:
-            実行結果の辞書
+            Dictionary with execution results.
         """
         if not self.repo_root.exists():
             return {
@@ -232,6 +232,8 @@ class GitManager:
                 "error": f"No .git directory found in {self.repo_root}",
             }
 
+        commits_behind = 0
+
         try:
             # Step 1: git fetch to get latest remote information
             fetch_result = self._run_git_command(["fetch"], timeout=30)
@@ -287,7 +289,7 @@ class GitManager:
                 "message": "Remote status checked successfully",
                 "need_pull": need_pull,
                 "status_output": status_output,
-                "commits_behind": commits_behind if "commits_behind" in locals() else 0,
+                "commits_behind": commits_behind,
             }
 
         except subprocess.TimeoutExpired:

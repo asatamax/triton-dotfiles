@@ -1,8 +1,8 @@
 """
-Validation結果表示用のヘルパーモジュール
+Helper module for validation result display.
 
-将来のリファクタリング（ValidationResultクラス化）の準備として、
-絵文字判定ロジックを1箇所に集約。
+Centralizes symbol/prefix logic in preparation for future refactoring
+(e.g., ValidationResult class).
 """
 
 import click
@@ -12,17 +12,17 @@ from .config import ConfigManager
 
 
 class ValidationDisplay:
-    """バリデーション結果の表示を統一管理するクラス"""
+    """Unified validation result display manager."""
 
-    # 記号判定の集約（将来のリファクタリング時にここだけ変更）
-    # CLI Design Guide: 設定系コマンドは記号ベース (✗, !, ✓)
+    # Centralized symbol definitions (change only here for future refactoring)
+    # CLI Design Guide: config commands use symbol-based prefixes (✗, !, ✓)
     ERROR_PREFIX = "✗"
     WARNING_PREFIX = "!"
     INFO_PREFIX = "i"
 
     @classmethod
     def categorize_results(cls, results: List[str]) -> Tuple[List[str], List[str]]:
-        """バリデーション結果を警告/情報とエラーに分類"""
+        """Categorize validation results into warnings/info and errors."""
         warnings_and_info = [
             r for r in results if r.startswith((cls.WARNING_PREFIX, cls.INFO_PREFIX))
         ]
@@ -37,15 +37,15 @@ class ValidationDisplay:
         ask_continue_on_error: bool = False,
     ) -> bool:
         """
-        統一されたバリデーション結果表示
+        Display validation results in a unified format.
 
         Args:
-            config_manager: 設定管理オブジェクト
-            show_success_message: エラーがない場合の成功メッセージ表示フラグ
-            ask_continue_on_error: エラー時に続行確認するフラグ
+            config_manager: Configuration manager object.
+            show_success_message: Show success message when no errors.
+            ask_continue_on_error: Prompt user to continue when errors exist.
 
         Returns:
-            bool: 続行可能かどうか（エラーなし or ユーザーが続行選択）
+            bool: Whether to proceed (no errors or user chose to continue).
         """
         validation_results = config_manager.validate_config()
         actual_errors = config_manager.get_validation_errors()
@@ -80,7 +80,7 @@ class ValidationDisplay:
         config_manager: ConfigManager,
         additional_warnings: Optional[List[str]] = None,
     ):
-        """詳細バリデーション表示（validate コマンド用）"""
+        """Display detailed validation results (for validate command)."""
         validation_results = config_manager.validate_config()
         actual_errors = config_manager.get_validation_errors()
 
@@ -107,30 +107,3 @@ class ValidationDisplay:
         # 完璧な場合の表示
         if not actual_errors and not additional_warnings:
             click.echo(f"\n{Fore.GREEN}✓ Configuration is valid{Style.RESET_ALL}")
-
-
-# 将来のリファクタリング準備用の列挙型（コメントアウト）
-"""
-from enum import Enum
-from dataclasses import dataclass
-
-class ValidationLevel(Enum):
-    ERROR = "error"
-    WARNING = "warning"
-    INFO = "info"
-
-@dataclass
-class ValidationResult:
-    level: ValidationLevel
-    message: str
-    context: Optional[str] = None  # どのターゲットやパスに関連するか
-
-    def __str__(self) -> str:
-        # CLI Design Guide: 設定系コマンドは記号ベース
-        prefix_map = {
-            ValidationLevel.ERROR: "✗",
-            ValidationLevel.WARNING: "!",
-            ValidationLevel.INFO: "i"
-        }
-        return f"{prefix_map[self.level]} {self.message}"
-"""

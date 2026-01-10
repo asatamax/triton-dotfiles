@@ -336,7 +336,7 @@ class FileManager:
             shutil.copy2(file_path, archive_file)
             return archive_file
         except Exception as e:
-            print(f"  Warning:Failed to archive {file_path}: {e}")
+            print(f"  Warning: Failed to archive {file_path}: {e}")
             return None
 
     def collect_target_files(
@@ -358,7 +358,7 @@ class FileManager:
         expanded_path = self.config_manager.expand_path(target.path)
 
         if not expanded_path.exists():
-            print(f"Warning:Skipping non-existent path: {expanded_path}")
+            print(f"Warning: Skipping non-existent path: {expanded_path}")
             return
 
         patterns = target.files or []
@@ -836,14 +836,12 @@ class FileManager:
                 ):
                     matching_files.append((backup_file, relative_path))
                 elif "*" in clean_pattern:
-                    import fnmatch
-
                     if fnmatch.fnmatch(file_path_str, clean_pattern):
                         matching_files.append((backup_file, relative_path))
 
         if not matching_files:
             print(
-                f"{Fore.YELLOW}Warning:No files found matching patterns: {', '.join(file_patterns)}{Style.RESET_ALL}"
+                f"{Fore.YELLOW}Warning: No files found matching patterns: {', '.join(file_patterns)}{Style.RESET_ALL}"
             )
             return
 
@@ -992,8 +990,6 @@ class FileManager:
                 matching_file = backup_file
                 break
             elif "*" in clean_pattern:
-                import fnmatch
-
                 if fnmatch.fnmatch(file_path_str, clean_pattern):
                     matching_file = backup_file
                     break
@@ -1506,7 +1502,7 @@ class FileManager:
                         # ディレクトリが空でない場合はスキップ
                         pass
         except Exception as e:
-            print(f"  Warning:Warning: Could not cleanup empty directories: {e}")
+            print(f"  Warning: Could not cleanup empty directories: {e}")
 
     def _build_target_mappings(self) -> Dict[str, Path]:
         """targetのマッピングを事前に構築（パフォーマンス最適化）"""

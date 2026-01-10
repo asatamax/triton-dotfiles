@@ -1,6 +1,7 @@
 """
-Dummy encryption implementation for triton-dotfiles
-cryptographyライブラリが利用できない場合のダミー実装
+Dummy encryption implementation for triton-dotfiles.
+
+Fallback implementation when the cryptography library is not available.
 """
 
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Optional, Union
 
 
 class DummyEncryptionManager:
-    """cryptographyライブラリが利用できない場合のダミー実装"""
+    """Dummy implementation when the cryptography library is not available."""
 
     def __init__(
         self,
@@ -23,15 +24,15 @@ class DummyEncryptionManager:
         return self.key_file.exists()
 
     def encrypt_data(self, data: bytes, file_path: str = "") -> bytes:
-        """ダミー実装：データをそのまま返す"""
+        """Dummy implementation: return data as-is."""
         return data
 
     def decrypt_data(self, encrypted_data: bytes) -> bytes:
-        """ダミー実装：データをそのまま返す"""
+        """Dummy implementation: return data as-is."""
         return encrypted_data
 
     def decrypt_file_content(self, file_path: Union[str, Path]) -> bytes:
-        """ダミー実装：ファイルをそのまま読み込む"""
+        """Dummy implementation: read file content as-is."""
         try:
             with open(file_path, "rb") as f:
                 return f.read()

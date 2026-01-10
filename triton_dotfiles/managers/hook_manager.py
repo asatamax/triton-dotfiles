@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Triton Dotfiles - Hook Manager
+Triton Dotfiles - Hook Manager.
 
-起動時フックの実行を管理するモジュール。
+Module for managing startup hook execution.
 """
 
 import subprocess
@@ -13,38 +13,30 @@ from ..config import HooksConfig
 
 
 class HookManager:
-    """起動時フック実行マネージャー"""
+    """Startup hook execution manager."""
 
     def __init__(self, hooks_config: HooksConfig):
         """
-        HookManagerを初期化。
+        Initialize HookManager.
 
         Args:
-            hooks_config: HooksConfig dataclass instance
+            hooks_config: HooksConfig dataclass instance.
         """
         self.hooks_config = hooks_config
 
     def run_startup_hooks(self, dry_run: bool = False) -> Dict[str, Any]:
         """
-        起動時フックを順次実行。
+        Execute startup hooks sequentially.
 
-        全体のタイムアウトを各hookで消費していく方式。
-        失敗しても続行し、結果を収集する。
+        Uses shared timeout across all hooks.
+        Continues on failure and collects results.
 
         Args:
-            dry_run: Trueの場合、実行せずに何が実行されるかを返す
+            dry_run: If True, return what would be executed without running.
 
         Returns:
-            {
-                "success": bool,      # 全て成功したか
-                "total": int,         # 総フック数
-                "succeeded": int,     # 成功数
-                "failed": int,        # 失敗数
-                "skipped": int,       # スキップ数（タイムアウト等）
-                "results": List[Dict],# 各フックの結果
-                "summary": str,       # サマリ文字列
-                "dry_run": bool,      # dry_runモードかどうか
-            }
+            Dictionary with execution results including success status,
+            counts, individual results, summary, and dry_run flag.
         """
         return self.run_startup_hooks_with_progress(dry_run=dry_run)
 
@@ -55,27 +47,19 @@ class HookManager:
         on_hook_complete: Optional[callable] = None,
     ) -> Dict[str, Any]:
         """
-        進捗コールバック付きで起動時フックを順次実行。
+        Execute startup hooks with progress callbacks.
 
-        全体のタイムアウトを各hookで消費していく方式。
-        失敗しても続行し、結果を収集する。
+        Uses shared timeout across all hooks.
+        Continues on failure and collects results.
 
         Args:
-            dry_run: Trueの場合、実行せずに何が実行されるかを返す
-            on_hook_start: フック開始時のコールバック (index, command) -> None
-            on_hook_complete: フック完了時のコールバック (index, command, success, skipped) -> None
+            dry_run: If True, return what would be executed without running.
+            on_hook_start: Callback on hook start (index, command) -> None.
+            on_hook_complete: Callback on hook complete (index, command, success, skipped) -> None.
 
         Returns:
-            {
-                "success": bool,      # 全て成功したか
-                "total": int,         # 総フック数
-                "succeeded": int,     # 成功数
-                "failed": int,        # 失敗数
-                "skipped": int,       # スキップ数（タイムアウト等）
-                "results": List[Dict],# 各フックの結果
-                "summary": str,       # サマリ文字列
-                "dry_run": bool,      # dry_runモードかどうか
-            }
+            Dictionary with execution results including success status,
+            counts, individual results, summary, and dry_run flag.
         """
         hooks = self.hooks_config.on_startup
         timeout = self.hooks_config.timeout
@@ -98,7 +82,7 @@ class HookManager:
         return self._execute_hooks(hooks, timeout, on_hook_start, on_hook_complete)
 
     def _dry_run_hooks(self, hooks: List[str], timeout: int) -> Dict[str, Any]:
-        """Dry-run mode: 実行せずに何が実行されるかを返す"""
+        """Dry-run mode: return what would be executed without running."""
         results = []
         for i, command in enumerate(hooks):
             results.append(
@@ -128,7 +112,7 @@ class HookManager:
         on_hook_start: Optional[callable] = None,
         on_hook_complete: Optional[callable] = None,
     ) -> Dict[str, Any]:
-        """実際にフックを実行"""
+        """Execute hooks."""
         results = []
         succeeded = 0
         failed = 0
@@ -216,23 +200,15 @@ class HookManager:
         self, command: str, remaining_timeout: float
     ) -> Dict[str, Any]:
         """
-        単一フックを実行。
+        Execute a single hook.
 
         Args:
-            command: 実行するコマンド
-            remaining_timeout: 残りタイムアウト（秒）
+            command: Command to execute.
+            remaining_timeout: Remaining timeout in seconds.
 
         Returns:
-            {
-                "command": str,
-                "success": bool,
-                "returncode": int,
-                "stdout": str,
-                "stderr": str,
-                "duration_ms": float,
-                "error": str | None,
-                "skipped": bool,
-            }
+            Dictionary with command, success, returncode, stdout,
+            stderr, duration_ms, error, and skipped fields.
         """
         hook_start = time.time()
 
@@ -287,15 +263,15 @@ class HookManager:
             }
 
     def has_hooks(self) -> bool:
-        """起動時フックが設定されているか"""
+        """Check if startup hooks are configured."""
         return bool(self.hooks_config.on_startup)
 
     def list_hooks(self) -> List[Dict[str, Any]]:
         """
-        設定されているフックの一覧を返す。
+        Return list of configured hooks.
 
         Returns:
-            List of hook info dicts with 'index' and 'command'
+            List of hook info dicts with 'index' and 'command'.
         """
         return [
             {"index": i, "command": cmd}
@@ -303,5 +279,5 @@ class HookManager:
         ]
 
     def get_timeout(self) -> int:
-        """タイムアウト設定を返す"""
+        """Return the timeout setting."""
         return self.hooks_config.timeout
