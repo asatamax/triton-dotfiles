@@ -341,6 +341,15 @@ class InitWizard:
         )
         click.echo(f"  {Fore.RED}{'=' * 55}{Style.RESET_ALL}")
 
+        # Require explicit acknowledgment (skip in non-interactive mode)
+        if not self.non_interactive:
+            click.echo()
+            click.prompt(
+                f"  {Fore.YELLOW}Press Enter to confirm you understand{Style.RESET_ALL}",
+                default="",
+                show_default=False,
+            )
+
     def _step_vault_setup(self, existing: Optional[dict] = None) -> bool:
         """Step 2: Configure vault (repository) location. Required."""
         click.echo(f"{Fore.GREEN}[Step 2/6] Vault Setup{Style.RESET_ALL}")
@@ -388,17 +397,15 @@ class InitWizard:
         if choice == 1:
             # Create new local directory
             default_path = Path.home() / "dotfiles-vault"
-            path_str = click.prompt(
+            vault_path = self._prompt_valid_path(
                 "  Vault path",
                 default=str(default_path),
             )
-            vault_path = Path(path_str).expanduser()
             return self._setup_vault_directory(vault_path)
 
         elif choice == 2:
             # Use existing repository
-            path_str = click.prompt("  Path to existing Git repository")
-            vault_path = Path(path_str).expanduser()
+            vault_path = self._prompt_valid_path("  Path to existing Git repository")
 
             if not vault_path.exists():
                 click.echo(
@@ -445,6 +452,44 @@ class InitWizard:
 
         click.echo()
         return True
+
+    def _prompt_valid_path(
+        self, prompt_text: str, default: Optional[str] = None
+    ) -> Path:
+        """Prompt for a valid file path with validation.
+
+        Validates that the input looks like a path (contains / or ~)
+        to prevent accidental numeric input from being used as a path.
+        """
+        while True:
+            if default:
+                path_str = click.prompt(prompt_text, default=default)
+            else:
+                path_str = click.prompt(prompt_text)
+
+            # Check if input looks like a valid path
+            path_str = path_str.strip()
+            if not path_str:
+                click.echo(
+                    f"  {Fore.YELLOW}Please enter a valid path.{Style.RESET_ALL}"
+                )
+                continue
+
+            # Reject pure numeric input (likely accidental from previous prompt)
+            if path_str.isdigit():
+                click.echo(
+                    f"  {Fore.YELLOW}Invalid path: '{path_str}'. Please enter a directory path.{Style.RESET_ALL}"
+                )
+                continue
+
+            # Path should contain / or start with ~
+            if "/" not in path_str and not path_str.startswith("~"):
+                click.echo(
+                    f"  {Fore.YELLOW}Invalid path format. Use absolute path (/) or home-relative path (~/).{Style.RESET_ALL}"
+                )
+                continue
+
+            return Path(path_str).expanduser()
 
     def _setup_vault_directory(self, vault_path: Path) -> bool:
         """Set up vault directory with Git initialization."""
