@@ -109,7 +109,13 @@ def cli(ctx, triton_dir, version, skip_startup):
             _show_welcome_message()
             sys.exit(0)
 
-        # Launch TUI when config exists
+        # Validate config before launching TUI
+        error = _validate_config_for_tui(config_path)
+        if error:
+            _show_config_error(error, config_path)
+            sys.exit(1)
+
+        # Launch TUI when config is valid
         _launch_default_tui(skip_startup=skip_startup)
         return
 
@@ -156,6 +162,60 @@ def _show_welcome_message():
     click.echo()
     click.echo(f"  {Fore.CYAN}Learn more:{Style.RESET_ALL}")
     click.echo("    triton --help")
+    click.echo()
+
+
+def _validate_config_for_tui(config_path: str) -> str | None:
+    """Validate config file before launching TUI.
+
+    Returns error message if validation fails, None if valid.
+    """
+    import yaml
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config_data = yaml.safe_load(f)
+
+        if not config_data or "config" not in config_data:
+            return "Invalid config structure: missing 'config' section"
+
+        config = config_data.get("config", {})
+        repo = config.get("repository", {})
+        repo_path = repo.get("path")
+
+        # Check repository.path
+        if repo_path is None:
+            return "Missing 'repository.path' in config"
+
+        # Check if path is a valid path format (not just a number)
+        repo_path_str = str(repo_path)
+        if repo_path_str.isdigit():
+            return f"Invalid 'repository.path': '{repo_path}' (expected a directory path, not a number)"
+
+        # Path should look like a path (contain / or start with ~)
+        if "/" not in repo_path_str and not repo_path_str.startswith("~"):
+            return f"Invalid 'repository.path': '{repo_path}' (should be an absolute path or start with ~)"
+
+        return None
+
+    except yaml.YAMLError as e:
+        return f"YAML parse error: {e}"
+    except Exception as e:
+        return f"Failed to read config: {e}"
+
+
+def _show_config_error(error: str, config_path: str):
+    """Show config error message with helpful guidance."""
+    click.echo()
+    click.echo(f"  {Fore.RED}Configuration Error{Style.RESET_ALL}")
+    click.echo()
+    click.echo(f"  {error}")
+    click.echo()
+    click.echo(f"  {Fore.CYAN}Config file:{Style.RESET_ALL} {config_path}")
+    click.echo()
+    click.echo(f"  {Fore.YELLOW}To fix:{Style.RESET_ALL}")
+    click.echo("    1. Edit the config file and correct the error")
+    click.echo("    2. Or run 'triton init' to reconfigure")
     click.echo()
 
 
