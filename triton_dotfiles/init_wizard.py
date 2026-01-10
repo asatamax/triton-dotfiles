@@ -63,14 +63,22 @@ PRESET_TARGETS: list[PresetTarget] = [
         auto_encrypted=True,
     ),
     PresetTarget(
-        path="~/.config",
-        description="Application configs",
+        path="~/.config/nvim",
+        description="Neovim config",
         recursive=True,
     ),
     PresetTarget(
         path="~/",
-        description="Shell configs (.zshrc, .bashrc, etc.)",
-        files=[".zshrc", ".bashrc", ".bash_profile", ".zshenv", ".zprofile"],
+        description="Shell & editor configs",
+        files=[
+            ".zshrc",
+            ".bashrc",
+            ".bash_profile",
+            ".zshenv",
+            ".zprofile",
+            ".vimrc",
+            ".tmux.conf",
+        ],
     ),
     PresetTarget(
         path="~/",
@@ -89,6 +97,11 @@ PRESET_TARGETS: list[PresetTarget] = [
             "hooks/**/*",
             "skills/**/*",
         ],
+    ),
+    PresetTarget(
+        path="~/.codex",
+        description="Codex CLI settings",
+        files=["AGENTS.md"],
     ),
 ]
 
@@ -654,43 +667,47 @@ class InitWizard:
             click.echo()
             return
 
-        click.echo("  Select targets to include in your first backup:")
+        # Find targets that exist on this machine
+        available_targets: list[tuple[int, PresetTarget]] = []
+        for i, target in enumerate(PRESET_TARGETS):
+            expanded_path = Path(target.path).expanduser()
+            if expanded_path.exists():
+                available_targets.append((i, target))
+
+        # If no targets exist, auto-skip
+        if not available_targets:
+            click.echo(
+                f"  {Fore.YELLOW}No suggested targets found on this machine.{Style.RESET_ALL}"
+            )
+            click.echo("  Add targets later with 'triton config target add'")
+            self.result.skipped_steps.append("backup_targets")
+            click.echo()
+            return
+
         click.echo(
-            "  (These can be modified later with 'triton config target add/remove')"
+            f"  {Fore.CYAN}Found {len(available_targets)} directories to backup:{Style.RESET_ALL}"
         )
         click.echo()
 
         selected_targets: list[PresetTarget] = []
 
-        for i, target in enumerate(PRESET_TARGETS):
-            # Check if path exists
-            expanded_path = Path(target.path).expanduser()
-            exists = expanded_path.exists()
-
-            status = (
-                f"{Fore.GREEN}exists{Style.RESET_ALL}"
-                if exists
-                else f"{Fore.YELLOW}not found{Style.RESET_ALL}"
-            )
+        for i, target in available_targets:
             encrypted = (
-                f" {Fore.CYAN}(auto-encrypted){Style.RESET_ALL}"
+                f" {Fore.CYAN}(encrypted){Style.RESET_ALL}"
                 if target.auto_encrypted
                 else ""
             )
+            click.echo(f"    [{i + 1}] {target.path} - {target.description}{encrypted}")
 
-            desc = target.description
-            if target.files:
-                desc += f" ({', '.join(target.files[:3])}{'...' if len(target.files) > 3 else ''})"
-
-            click.echo(f"    [{i + 1}] {target.path} - {desc}")
-            click.echo(f"        [{status}]{encrypted}")
-
-        click.echo("    [0] Skip - I'll add targets manually")
+        click.echo()
+        click.echo(
+            f"    {Fore.YELLOW}[0]{Style.RESET_ALL} Skip - I'll configure manually"
+        )
         click.echo()
 
         choices = click.prompt(
-            "  Enter numbers separated by commas, or 'all' (e.g., 1,2,4)",
-            default="1,2,4",
+            "  Select targets (comma-separated, or 'all')",
+            default="all",
         )
 
         choice_stripped = choices.strip().lower()
@@ -781,9 +798,62 @@ class InitWizard:
                     replacement = r"\1\n    machine_name: " + self.result.machine_name
                     content = re.sub(pattern, replacement, content)
 
+            # Add selected targets that are not in template
+            content = self._add_selected_targets_to_config(content)
+
             config_path.write_text(content)
         except Exception:
             pass  # Non-critical, user can edit manually
+
+    def _add_selected_targets_to_config(self, content: str) -> str:
+        """Add wizard-selected targets that are not already in the config template."""
+        if not hasattr(self, "_selected_targets") or not self._selected_targets:
+            return content
+
+        # Paths that are already in the template (no need to add again)
+        template_paths = {
+            "~/",
+            "~/.ssh",
+            "~/.aws",
+            "~/.config/git",
+            "~/.config/triton",
+        }
+
+        # Find targets that need to be added
+        targets_to_add = [
+            t for t in self._selected_targets if t.path not in template_paths
+        ]
+
+        if not targets_to_add:
+            return content
+
+        # Generate YAML for new targets
+        yaml_lines = ["\n    # --- Wizard-added targets ---"]
+        for target in targets_to_add:
+            yaml_lines.append(f"    - path: {target.path}")
+            if target.files:
+                if len(target.files) == 1:
+                    yaml_lines.append(f'      files: ["{target.files[0]}"]')
+                else:
+                    yaml_lines.append("      files:")
+                    for f in target.files:
+                        yaml_lines.append(f'        - "{f}"')
+            if target.recursive:
+                yaml_lines.append("      recursive: true")
+            yaml_lines.append("")
+
+        yaml_block = "\n".join(yaml_lines)
+
+        # Insert before "# Global Exclude Patterns" section
+        marker = "  # ============================================================\n  # Global Exclude Patterns"
+        if marker in content:
+            content = content.replace(marker, yaml_block + "\n" + marker)
+        else:
+            # Fallback: append to targets section
+            # Find end of targets section and insert there
+            pass  # Just append if marker not found
+
+        return content
 
     def _print_summary(self) -> None:
         """Print final summary and next steps."""
