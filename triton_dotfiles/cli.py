@@ -102,8 +102,14 @@ def cli(ctx, triton_dir, version, skip_startup):
 
     # Determine config file location (except when launching TUI)
     if ctx.invoked_subcommand is None:
-        # Launch TUI when no subcommand is specified
-        # Skip config file check for special error handling
+        # Check config file before launching TUI
+        config_path = find_config_file()
+        if config_path is None:
+            # First-time user: show friendly welcome message instead of error
+            _show_welcome_message()
+            sys.exit(0)
+
+        # Launch TUI when config exists
         _launch_default_tui(skip_startup=skip_startup)
         return
 
@@ -130,6 +136,27 @@ def cli(ctx, triton_dir, version, skip_startup):
         sys.exit(1)
 
     ctx.obj["config_path"] = config_path
+
+
+def _show_welcome_message():
+    """Show friendly welcome message for first-time users."""
+    version_info = get_version_info()
+    version = version_info["version"]
+
+    click.echo()
+    click.echo(f"  {Fore.CYAN}Welcome to Triton Dotfiles {version}{Style.RESET_ALL}")
+    click.echo()
+    click.echo("  Triton helps you manage and sync dotfiles across machines.")
+    click.echo("  Let's get you set up!")
+    click.echo()
+    click.echo(f"  {Fore.YELLOW}Get started:{Style.RESET_ALL}")
+    click.echo(
+        f"    {Fore.GREEN}triton init{Style.RESET_ALL}  - Interactive setup wizard"
+    )
+    click.echo()
+    click.echo(f"  {Fore.CYAN}Learn more:{Style.RESET_ALL}")
+    click.echo("    triton --help")
+    click.echo()
 
 
 def _launch_default_tui(skip_startup: bool = False):
