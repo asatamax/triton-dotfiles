@@ -102,11 +102,15 @@ config:
     - "*.log"
     - "*.tmp"
     - "*.bak"
+    - "*.old"
     - "*~"
     - ".*.swp"
     - "*.cache"
     - "*.pid"
     - "*.lock"
+    # Git directories (avoid backing up nested repos)
+    - ".git"
+    - ".git/**"
 
   # ============================================================
   # Encryption Settings
@@ -128,9 +132,26 @@ config:
     - "*.key"
     - "*.p12"
     - "*.pfx"
+    - "*.key.json"
     # Cloud credentials
     - credentials
     - "sso/cache/*"
+    # VPN configurations
+    - "*.ovpn"
+    - "*/OpenVPN/*/config.conf"
+    # Environment files
+    - ".env"
+    - ".env.*"
+    # Auth & credentials
+    - "*credential*"
+    - "*private*"
+    - ".netrc"
+    - ".npmrc"
+    - ".pypirc"
+    - "auth.json"
+    # Kubernetes
+    - "kubeconfig"
+    - "*.kubeconfig"
     # Sensitive patterns
     - "*secret*"
     - "*password*"
