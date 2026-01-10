@@ -700,18 +700,14 @@ class InitWizard:
             click.echo(f"    [{i + 1}] {target.path} - {target.description}{encrypted}")
 
         click.echo()
-        click.echo(
-            f"    {Fore.YELLOW}[0]{Style.RESET_ALL} Skip - I'll configure manually"
-        )
-        click.echo()
 
         choices = click.prompt(
-            "  Select targets (comma-separated, or 'all')",
+            "  Press Enter for all, or type numbers/none",
             default="all",
         )
 
         choice_stripped = choices.strip().lower()
-        if choice_stripped == "0":
+        if choice_stripped == "none":
             self.result.skipped_steps.append("backup_targets")
             click.echo(
                 f"  {Fore.YELLOW}Skipped. Add targets later with 'triton config target add'{Style.RESET_ALL}"
