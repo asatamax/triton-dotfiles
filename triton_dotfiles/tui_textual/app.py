@@ -15,10 +15,10 @@ from ..__version__ import get_version
 
 
 class TritonCommandProvider(Provider):
-    """Triton TUI用のカスタムコマンドプロバイダー"""
+    """Custom command provider for Triton TUI."""
 
     async def search(self, query: str) -> Hits:
-        """コマンド検索"""
+        """Search commands."""
         matcher = self.matcher(query)
 
         commands = [

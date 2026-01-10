@@ -1,6 +1,7 @@
 """
-Real encryption implementation for triton-dotfiles
-AES-256-GCM暗号化によるファイル保護機能
+Real encryption implementation for triton-dotfiles.
+
+Provides AES-256-GCM encryption for file protection.
 """
 
 import secrets
@@ -19,14 +20,14 @@ except ImportError:
 
 
 class EncryptionManager:
-    """AES-256-GCM暗号化機能を管理するクラス"""
+    """Manages AES-256-GCM encryption functionality."""
 
     def __init__(self, key_file: Union[str, Path]):
         """
-        暗号化マネージャーを初期化
+        Initialize the encryption manager.
 
         Args:
-            key_file: キーファイルのパス（必須）
+            key_file: Path to the key file (required).
         """
         if not CRYPTOGRAPHY_AVAILABLE:
             raise ImportError("cryptography library is not installed")
@@ -40,11 +41,11 @@ class EncryptionManager:
         self._nonce_key = None
 
     def key_exists(self) -> bool:
-        """キーファイルが存在するかチェック"""
+        """Check if the key file exists."""
         return self.key_file.exists()
 
     def _load_master_key(self) -> bytes:
-        """マスターキーを読み込み"""
+        """Load the master key from file."""
         if self._master_key is not None:
             return self._master_key
 
@@ -61,7 +62,7 @@ class EncryptionManager:
         return self._master_key
 
     def _get_encryption_key(self) -> bytes:
-        """暗号化専用キーを派生"""
+        """Derive the encryption-specific key."""
         if self._encryption_key is not None:
             return self._encryption_key
 
@@ -77,7 +78,7 @@ class EncryptionManager:
         return self._encryption_key
 
     def _get_nonce_key(self) -> bytes:
-        """nonce生成専用キーを派生"""
+        """Derive the nonce-generation-specific key."""
         if self._nonce_key is not None:
             return self._nonce_key
 
@@ -94,14 +95,14 @@ class EncryptionManager:
 
     def _generate_deterministic_nonce(self, data: bytes, file_path: str = "") -> bytes:
         """
-        ファイルパス、データ内容、専用キーから決定論的nonceを生成
+        Generate a deterministic nonce from file path, data, and dedicated key.
 
         Args:
-            data: 暗号化対象のデータ
-            file_path: ファイルパス（セキュリティ向上のため）
+            data: Data to be encrypted.
+            file_path: File path (for improved security).
 
         Returns:
-            12バイトの決定論的nonce
+            12-byte deterministic nonce.
         """
         nonce_key = self._get_nonce_key()
 
@@ -116,14 +117,14 @@ class EncryptionManager:
 
     def encrypt_data(self, data: bytes, file_path: str = "") -> bytes:
         """
-        データをAES-256-GCMで暗号化
+        Encrypt data using AES-256-GCM.
 
         Args:
-            data: 暗号化するデータ
-            file_path: ファイルパス（nonce生成に使用）
+            data: Data to encrypt.
+            file_path: File path (used for nonce generation).
 
         Returns:
-            暗号化されたデータ（nonce + ciphertext + tag）
+            Encrypted data (nonce + ciphertext + tag).
         """
         encryption_key = self._get_encryption_key()
 
@@ -142,13 +143,13 @@ class EncryptionManager:
 
     def decrypt_data(self, encrypted_data: bytes) -> bytes:
         """
-        AES-256-GCMで暗号化されたデータを復号化
+        Decrypt AES-256-GCM encrypted data.
 
         Args:
-            encrypted_data: 暗号化されたデータ（nonce + ciphertext + tag）
+            encrypted_data: Encrypted data (nonce + ciphertext + tag).
 
         Returns:
-            復号化されたデータ
+            Decrypted data.
         """
         encryption_key = self._get_encryption_key()
 
@@ -175,13 +176,13 @@ class EncryptionManager:
 
     def decrypt_file_content(self, file_path: Union[str, Path]) -> bytes:
         """
-        暗号化ファイルを読み込んで復号化
+        Read and decrypt an encrypted file.
 
         Args:
-            file_path: 暗号化ファイルのパス
+            file_path: Path to the encrypted file.
 
         Returns:
-            復号化されたデータ
+            Decrypted data.
         """
         try:
             with open(file_path, "rb") as f:
@@ -192,7 +193,7 @@ class EncryptionManager:
 
 
 def generate_random_key() -> bytes:
-    """AES-256用の32バイトランダムキーを生成"""
+    """Generate a 32-byte random key for AES-256."""
     if not CRYPTOGRAPHY_AVAILABLE:
-        raise ImportError("cryptography ライブラリがインストールされていません")
+        raise ImportError("cryptography library is not installed")
     return secrets.token_bytes(32)

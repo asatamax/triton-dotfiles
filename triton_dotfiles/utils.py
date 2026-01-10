@@ -15,18 +15,18 @@ def safe_import(
     module_name: str, package: str = None, fallback_path: str = None
 ) -> Any:
     """
-    安全なインポート処理
+    Safe import handling.
 
     Args:
-        module_name: インポートするモジュール名
-        package: パッケージ名（相対インポート用）
-        fallback_path: フォールバック時にsys.pathに追加するパス
+        module_name: Name of the module to import.
+        package: Package name (for relative imports).
+        fallback_path: Path to add to sys.path as fallback.
 
     Returns:
-        インポートしたモジュール
+        Imported module.
 
     Raises:
-        ImportError: インポートに失敗した場合
+        ImportError: If import fails.
     """
     try:
         # 相対インポートを試す
@@ -44,19 +44,19 @@ def safe_import(
 
 
 def get_package_root() -> Path:
-    """パッケージルートディレクトリを取得"""
+    """Get the package root directory."""
     return Path(__file__).parent
 
 
 def import_from_package(module_name: str) -> Any:
     """
-    パッケージから統一的にモジュールをインポート
+    Import a module from the package uniformly.
 
     Args:
-        module_name: インポートするモジュール名（例: 'config', 'file_manager'）
+        module_name: Name of the module to import (e.g., 'config', 'file_manager').
 
     Returns:
-        インポートしたモジュール
+        Imported module.
     """
     package_root = get_package_root()
 
@@ -74,35 +74,35 @@ def import_from_package(module_name: str) -> Any:
 
 def import_class_from_module(module_name: str, class_name: str) -> Type:
     """
-    モジュールから特定のクラスをインポート
+    Import a specific class from a module.
 
     Args:
-        module_name: モジュール名
-        class_name: クラス名
+        module_name: Module name.
+        class_name: Class name.
 
     Returns:
-        インポートしたクラス
+        Imported class.
     """
     module = import_from_package(module_name)
     return getattr(module, class_name)
 
 
 def get_triton_dir() -> Path:
-    """Tritonディレクトリのパスを取得（環境変数対応）
+    """Get the Triton directory path (with environment variable support).
 
     Returns:
-        Path: Tritonディレクトリのパス（絶対パス・解決済み）
+        Path: Triton directory path (absolute, resolved).
 
     Note:
-        TRITON_DIR環境変数が設定されている場合はそれを使用、
-        未設定の場合は~/.config/tritonを使用
+        Uses TRITON_DIR environment variable if set,
+        otherwise defaults to ~/.config/triton.
     """
     return Path(os.getenv("TRITON_DIR", "~/.config/triton")).expanduser().resolve()
 
 
 def matches_glob_pattern(path: Path, pattern: str) -> bool:
     """
-    パスがglobパターンにマッチするかチェック
+    Check if a path matches a glob pattern.
 
     Supports:
     - Basic wildcards: *.txt, config.*
@@ -110,11 +110,11 @@ def matches_glob_pattern(path: Path, pattern: str) -> bool:
     - Path matching: packages/*/src
 
     Args:
-        path: チェック対象のパス（相対パス）
-        pattern: globパターン
+        path: Path to check (relative path).
+        pattern: Glob pattern.
 
     Returns:
-        マッチした場合True
+        True if matched.
     """
     # パスをPOSIX形式に正規化
     path_str = str(PurePosixPath(path))
@@ -155,17 +155,17 @@ def matches_glob_pattern(path: Path, pattern: str) -> bool:
 
 def matches_any_pattern(file_path: Path, patterns: List[str]) -> bool:
     """
-    ファイルがパターンリストのいずれかにマッチするかチェック（OR評価）
+    Check if a file matches any pattern in the list (OR evaluation).
 
-    blacklistやencrypt_listのような最優先ルールに使用。
-    いずれかのパターンにマッチすれば True を返す。
+    Used for priority rules like blacklist or encrypt_list.
+    Returns True if any pattern matches.
 
     Args:
-        file_path: チェック対象のファイルパス
-        patterns: パターンリスト
+        file_path: File path to check.
+        patterns: List of patterns.
 
     Returns:
-        いずれかのパターンにマッチした場合True
+        True if any pattern matched.
     """
     for pattern in patterns:
         if matches_glob_pattern(file_path, pattern):

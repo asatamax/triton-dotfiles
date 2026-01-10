@@ -1,6 +1,7 @@
 """
-Encryption module for triton-dotfiles
-暗号化機能の統一インターフェース
+Encryption module for triton-dotfiles.
+
+Provides a unified interface for encryption functionality.
 """
 
 import importlib.util
@@ -17,13 +18,13 @@ def get_encryption_manager(
     key_file: Optional[Union[str, Path]] = None,
 ) -> Union[EncryptionManager, DummyEncryptionManager]:
     """
-    適切なEncryptionManagerインスタンスを取得
+    Get an appropriate EncryptionManager instance.
 
     Args:
-        key_file: キーファイルのパス
+        key_file: Path to the key file.
 
     Returns:
-        EncryptionManagerまたはDummyEncryptionManager
+        EncryptionManager or DummyEncryptionManager instance.
     """
     if CRYPTOGRAPHY_AVAILABLE:
         return EncryptionManager(key_file)
@@ -36,17 +37,17 @@ def create_encryption_key(
     force: bool = False,
 ) -> str:
     """
-    暗号化キーファイルを作成
+    Create an encryption key file.
 
     Args:
-        key_path: キーファイルの保存パス（未指定時は ~/.config/triton/master.key）
-        force: 既存キーを上書きする場合はTrue
+        key_path: Path to save the key file (default: ~/.config/triton/master.key).
+        force: Overwrite existing key if True.
 
     Returns:
-        作成されたキーファイルのパス
+        Path to the created key file.
 
     Raises:
-        FileExistsError: 既存キーが存在し、forceがFalseの場合
+        FileExistsError: If key exists and force is False.
     """
     if key_path is None:
         key_path = Path.home() / ".config" / "triton" / "master.key"

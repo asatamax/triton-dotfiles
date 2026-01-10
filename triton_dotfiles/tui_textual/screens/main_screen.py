@@ -23,21 +23,21 @@ from ..widgets.dialogs import (
 
 
 class MainScreen(Static):
-    """メイン画面（2ペイン構成）"""
+    """Main screen (2-pane layout)."""
 
     def __init__(self, skip_startup: bool = True, **kwargs):
         """
-        MainScreenを初期化。
+        Initialize MainScreen.
 
         Args:
-            skip_startup: 起動時処理をスキップするか（StartupScreen使用時は常にTrue）
+            skip_startup: Whether to skip startup processing (always True when using StartupScreen).
         """
         super().__init__(**kwargs)
         # skip_startupは互換性のため残すが、StartupScreen導入後は常にTrueで使用
         self._skip_startup = skip_startup
 
     def compose(self) -> ComposeResult:
-        """2ペイン構成のレイアウト"""
+        """Compose the 2-pane layout."""
         with Horizontal():
             # 左ペイン（ファイル一覧）
             self.left_pane = Vertical(classes="left-pane")
@@ -52,7 +52,7 @@ class MainScreen(Static):
                 yield self.content_viewer
 
     def on_mount(self) -> None:
-        """画面初期化時の処理"""
+        """Handle screen initialization."""
         # file_adapterを初期化
         try:
             self.file_adapter = TUIFileAdapter()
@@ -88,7 +88,7 @@ class MainScreen(Static):
             )
 
     def _load_initial_data(self) -> None:
-        """初期データを読み込み"""
+        """Load initial data."""
         # マシン一覧を取得
         self.machines = self.file_adapter.get_available_machines()
 
