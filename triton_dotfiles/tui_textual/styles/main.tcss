@@ -1,0 +1,177 @@
+/* Textual CSS for triton-dotfiles TUI */
+
+/* グローバルテーマ */
+App {
+    background: $surface;
+    color: $text;
+    overflow: hidden;
+}
+
+/* ヘッダー */
+Header {
+    dock: top;
+    height: 3;
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+/* フッター */
+Footer {
+    dock: bottom;
+    height: 1;
+    background: $panel;
+}
+
+/* ステータスバー */
+StatusBar {
+    height: 1;
+    width: 100%;
+    background: $surface-darken-1;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* メインコンテナ */
+MainScreen {
+    layout: horizontal;
+    height: 1fr;
+    overflow: hidden;
+}
+
+/* 左ペイン（ファイル一覧） */
+.left-pane {
+    width: 3.5fr;
+    border-right: solid $primary;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* 右ペイン（コンテンツ） */
+.right-pane {
+    width: 6.5fr;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* タイトル */
+#file-list-title, #content-title {
+    text-style: bold;
+    background: $accent 20%;
+    padding: 0 1;
+    height: 1;
+}
+
+/* コンテンツエリア */
+#file-list, #content-viewer, #content-display {
+    height: 1fr;
+    padding: 1;
+    scrollbar-gutter: stable;
+}
+
+/* ダイアログスタイル */
+.dialog-title {
+    text-style: bold;
+    background: $accent 20%;
+    padding: 0 1;
+    height: 1;
+    text-align: center;
+    color: $text;
+}
+
+/* ファイルリストアイテム */
+ListItem {
+    height: 1;
+    padding: 0 1;
+}
+
+ListItem:hover {
+    background: $primary 20%;
+}
+
+ListItem > Label {
+    height: 1;
+}
+
+
+
+/* ボタン */
+Button {
+    margin: 0 1;
+    min-width: 8;
+}
+
+Button.-primary {
+    background: $primary;
+    color: $text;
+}
+
+Button.-secondary {
+    background: $panel;
+    color: $text;
+}
+
+/* チェックボックス */
+Checkbox {
+    width: 3;
+    height: 1;
+    background: transparent;
+    padding: 0;
+}
+
+Checkbox:focus {
+    background: $primary 20%;
+}
+
+/* 入力フィールド */
+Input {
+    margin: 1 0;
+    padding: 0 1;
+    border: solid $primary;
+}
+
+Input:focus {
+    border: solid $accent;
+}
+
+/* プログレスバー */
+ProgressBar {
+    margin: 1 0;
+}
+
+/* Split view specific styles */
+#split-horizontal {
+    layout: horizontal;
+    height: 1fr;
+    width: 1fr;
+}
+
+.split-left {
+    width: 1fr;
+    border-right: solid $primary;
+    padding: 0;
+}
+
+.split-right {
+    width: 1fr;
+    padding: 0;
+}
+
+.split-left ScrollableContainer,
+.split-right ScrollableContainer {
+    height: 1fr;
+    width: 1fr;
+    scrollbar-gutter: stable;
+}
+
+/* Left pane toggle states */
+.left-pane.hidden {
+    display: none;
+}
+
+.right-pane.full-width {
+    width: 1fr;
+    max-width: 100%;
+}
+
+/* レスポンシブ対応は後で実装 */

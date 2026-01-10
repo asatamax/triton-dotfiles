@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "triton_dotfiles.__version__.__version__"}
+
+[project]
+name = "triton-dotfiles"
+dynamic = ["version"]
+description = "🏠 Multi-machine dotfiles management tool"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+keywords = ["dotfiles", "configuration", "management", "backup", "sync", "encryption"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "PyYAML>=6.0",
+    "click>=8.0",
+    "colorama>=0.4.6",
+    "cryptography>=40.0",
+    "rich>=13.0",
+    "rich-click>=1.7",
+    "textual>=0.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=22.0",
+    "flake8>=5.0",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/asatamax/triton-dotfiles"
+Repository = "https://github.com/asatamax/triton-dotfiles"
+Issues = "https://github.com/asatamax/triton-dotfiles/issues"
+
+[project.scripts]
+triton = "triton_dotfiles.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["triton_dotfiles*"]
+
+[tool.setuptools.package-data]
+triton_dotfiles = [
+    "tui_textual/styles/*.tcss",
+    "templates/*.yml"
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "--cov=triton_dotfiles --cov-report=html --cov-report=term"
