@@ -92,9 +92,14 @@ def get_machine_name_unified(
 ) -> str:
     """
     統一されたマシン名取得ロジック
+    - configured_machine_nameが設定されている場合はそれを優先
     - VPN接続時のip-192.168...形式を回避
     - macOS/Linux/Windowsでの適切なマシン名取得
     """
+    # If machine_name is explicitly configured, use it
+    if configured_machine_name:
+        return configured_machine_name
+
     if use_hostname:
         hostname = socket.gethostname().split(".")[0]
         # IPアドレス形式やVPN形式の場合はplatform.nodeまたはSCUTILを試す
