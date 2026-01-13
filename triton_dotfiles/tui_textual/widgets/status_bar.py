@@ -33,7 +33,7 @@ class StatusBar(Static):
         """Set the update notification message.
 
         Args:
-            message: Update message like "Update: v1.0.1" or None to clear.
+            message: Update message like "Update available: v1.0.1" or None to clear.
         """
         self._update_message = message
         self._refresh_display()
