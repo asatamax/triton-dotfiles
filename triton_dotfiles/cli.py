@@ -196,6 +196,21 @@ def _validate_config_for_tui(config_path: str) -> str | None:
         if "/" not in repo_path_str and not repo_path_str.startswith("~"):
             return f"Invalid 'repository.path': '{repo_path}' (should be an absolute path or start with ~)"
 
+        # Check encryption key if encryption is enabled
+        encryption = config.get("encryption", {})
+        encryption_enabled = encryption.get("enabled", False)
+
+        if encryption_enabled:
+            triton_dir = get_triton_dir()
+            key_path = triton_dir / "master.key"
+
+            if not key_path.exists():
+                return (
+                    f"Encryption is enabled but master.key not found at: {key_path}\n"
+                    "  If setting up a new machine, copy master.key from your existing machine.\n"
+                    "  Or run 'triton init' to generate a new key (WARNING: cannot decrypt existing files)."
+                )
+
         return None
 
     except yaml.YAMLError as e:

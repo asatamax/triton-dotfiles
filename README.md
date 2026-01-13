@@ -85,6 +85,8 @@ triton
 | `?` | Show all shortcuts |
 | `Space` | Select files |
 | `R` | Restore selected |
+| `B` | Backup files |
+| `C` | Commit & Push |
 | `d` | Show diff view |
 | `s` | Split view (local vs backup) |
 | `m` | Switch machine |

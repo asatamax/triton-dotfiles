@@ -32,6 +32,7 @@ class WizardResult:
     machine_name: Optional[str] = None
     backup_executed: bool = False
     needs_remote_setup: bool = False  # True if local vault was created without remote
+    needs_master_key_placement: bool = False  # True if user chose to use existing key
     targets_added: list[str] = field(default_factory=list)
     skipped_steps: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -163,6 +164,9 @@ class InitWizard:
 
         # Show remote repository reminder if needed
         self._show_remote_reminder()
+
+        # Show master.key placement reminder if user chose to use existing key
+        self._show_master_key_reminder()
 
         self.result.success = True
         return self.result
@@ -307,6 +311,39 @@ class InitWizard:
                 # Non-interactive: use existing key
                 click.echo()
                 return True
+        else:
+            # Key does not exist - ask user what to do
+            if not self.non_interactive:
+                click.echo("  No encryption key found. Choose an option:")
+                click.echo()
+                click.echo(
+                    f"    {Fore.CYAN}[1]{Style.RESET_ALL} Create new master.key (first machine setup)"
+                )
+                click.echo(
+                    f"    {Fore.CYAN}[2]{Style.RESET_ALL} Use existing master.key (setting up additional machine)"
+                )
+                click.echo()
+
+                choice = click.prompt(
+                    "  Choice",
+                    type=click.IntRange(1, 2),
+                    default=1,
+                )
+
+                if choice == 2:
+                    # User will copy key from another machine
+                    self.result.needs_master_key_placement = True
+                    self.result.skipped_steps.append("encryption_key_generation")
+                    click.echo()
+                    click.echo(
+                        f"  {Fore.YELLOW}Skipping key generation.{Style.RESET_ALL}"
+                    )
+                    click.echo(
+                        f"  {Fore.CYAN}You will need to copy your master.key from another machine.{Style.RESET_ALL}"
+                    )
+                    click.echo()
+                    return True
+                # choice == 1: continue to generate new key below
 
         try:
             # Generate new key
@@ -1020,6 +1057,41 @@ class InitWizard:
         click.echo()
         click.echo(
             f"  {Fore.YELLOW}Tip: Use a PRIVATE repository to keep your dotfiles secure.{Style.RESET_ALL}"
+        )
+        click.echo()
+
+    def _show_master_key_reminder(self) -> None:
+        """Show reminder to place master.key if user chose to use existing key."""
+        if not self.result.needs_master_key_placement:
+            return
+
+        triton_dir = get_triton_dir()
+        key_path = triton_dir / "master.key"
+
+        click.echo()
+        click.echo(f"{Fore.RED}{'─' * 55}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}  REQUIRED: Place your master.key file{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}{'─' * 55}{Style.RESET_ALL}")
+        click.echo()
+        click.echo(
+            f"  {Fore.WHITE}You chose to use an existing encryption key.{Style.RESET_ALL}"
+        )
+        click.echo(
+            f"  {Fore.WHITE}Copy your master.key from another machine to:{Style.RESET_ALL}"
+        )
+        click.echo()
+        click.echo(f"    {Fore.CYAN}{key_path}{Style.RESET_ALL}")
+        click.echo()
+        click.echo(f"  {Fore.YELLOW}Example (from another machine):{Style.RESET_ALL}")
+        click.echo(
+            f"    scp ~/.config/triton/master.key {Fore.CYAN}this-machine:{key_path}{Style.RESET_ALL}"
+        )
+        click.echo()
+        click.echo(
+            f"  {Fore.RED}WARNING: triton will not work until master.key is in place.{Style.RESET_ALL}"
+        )
+        click.echo(
+            f"  {Fore.RED}         Encrypted files cannot be read without the correct key.{Style.RESET_ALL}"
         )
         click.echo()
 

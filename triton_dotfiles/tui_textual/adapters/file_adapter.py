@@ -3,7 +3,6 @@ File operations adapter for TUI
 """
 
 import os
-import fnmatch
 from pathlib import Path
 from colorama import Fore, Style
 from ...managers.file_comparison_manager import (
@@ -42,15 +41,19 @@ class TUIFileAdapter:
         repo_path = getattr(self.config.repository, "path", "~/dotfiles")
         return os.path.expanduser(repo_path)
 
-    def _is_system_file(self, filename):
-        """システムファイルかどうか判定"""
-        if not self.config.tui.hide_system_files:
-            return False
+    def _should_exclude_from_ui(self, file_path: str) -> bool:
+        """
+        UI表示から除外すべきファイルかどうか判定。
 
-        for pattern in self.config.tui.system_file_patterns:
-            if fnmatch.fnmatch(filename, pattern):
-                return True
-        return False
+        FileManagerの共通ロジックに委譲し、CLI/TUIで一貫したフィルタリングを実現。
+        セキュリティ保護（master.key等）と見た目系システムファイル（.DS_Store等）
+        の両方をチェックする。
+        """
+        return self.file_manager.should_exclude_from_ui(
+            Path(file_path),
+            self.config.tui.hide_system_files,
+            self.config.tui.system_file_patterns,
+        )
 
     def get_available_machines(self):
         """利用可能なマシン一覧を取得"""
@@ -114,10 +117,8 @@ class TUIFileAdapter:
                     # machine_pathからの相対パスを計算
                     relative_path = os.path.relpath(file_path, machine_path)
 
-                    # システムファイルをフィルタリング
-                    if self._is_system_file(filename) or self._is_system_file(
-                        relative_path
-                    ):
+                    # セキュリティ保護・システムファイルをフィルタリング
+                    if self._should_exclude_from_ui(file_path):
                         continue
 
                     # 暗号化ファイルかチェック
@@ -327,11 +328,8 @@ class TUIFileAdapter:
                     home_path = Path.home()
                     relative_path = os.path.relpath(target_path, home_path)
 
-                    # システムファイルをフィルタリング
-                    filename = target_path.name
-                    if self._is_system_file(filename) or self._is_system_file(
-                        relative_path
-                    ):
+                    # セキュリティ保護・システムファイルをフィルタリング
+                    if self._should_exclude_from_ui(str(target_path)):
                         continue
 
                     # ファイル情報を取得
