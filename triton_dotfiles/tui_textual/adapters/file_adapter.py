@@ -261,11 +261,16 @@ class TUIFileAdapter:
             return "other"
 
     def clear_local_only_cache(self):
-        """ローカル専用ファイル検出のキャッシュをクリア"""
+        """ローカル専用ファイル検出とハッシュキャッシュをクリア
+
+        Restore後の正確なファイル比較のため、ハッシュキャッシュもクリアする。
+        """
         if hasattr(self.file_comparison_manager, "_path_cache"):
             self.file_comparison_manager._path_cache.clear()
         if hasattr(self.file_comparison_manager, "_inode_cache"):
             self.file_comparison_manager._inode_cache.clear()
+        if hasattr(self.file_comparison_manager, "_hash_cache"):
+            self.file_comparison_manager._hash_cache.clear()
 
     def _get_local_only_files(self, existing_files):
         """ローカルにのみ存在するファイルを検出"""
