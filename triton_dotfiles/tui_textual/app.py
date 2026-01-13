@@ -191,6 +191,37 @@ class TritonTUIApp(App):
         self.title = f"Triton TUI Browser {version}"
         self.sub_title = "Dotfiles Management"
 
+        # Check for updates in background (non-blocking)
+        self.run_worker(self._check_for_updates, exclusive=False)
+
+    async def _check_for_updates(self) -> None:
+        """Check for updates in background and update status bar."""
+        try:
+            from ..version_check import get_update_message
+
+            # Run in thread to avoid blocking (network I/O)
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            message = await loop.run_in_executor(None, get_update_message)
+
+            if message:
+                # Update status bar on main thread
+                self.call_from_thread(self._set_update_message, message)
+        except Exception:
+            # Silently ignore any errors during version check
+            pass
+
+    def _set_update_message(self, message: str) -> None:
+        """Set update message on status bar (called from main thread)."""
+        try:
+            from .widgets.status_bar import StatusBar
+
+            status_bar = self.query_one(StatusBar)
+            status_bar.set_update_message(message)
+        except Exception:
+            pass
+
     def action_show_help(self) -> None:
         """ヘルプを表示"""
         from .widgets.dialogs import MessageDialog

@@ -209,6 +209,65 @@ class FileManager:
             # is_relative_to や relative_to でエラーが発生した場合
             return False
 
+    def is_cosmetic_system_file(self, filename: str, patterns: list[str]) -> bool:
+        """
+        見た目上の理由で非表示にすべきシステムファイルかどうかをチェック。
+
+        .DS_Store, Thumbs.db などの OS 生成ファイルを対象とする。
+        セキュリティ保護（master.key等）とは異なり、ユーザー設定でオフにできる。
+
+        Args:
+            filename: チェックするファイル名
+            patterns: システムファイルパターンのリスト（fnmatch形式）
+
+        Returns:
+            パターンにマッチすればTrue
+        """
+        import fnmatch
+
+        for pattern in patterns:
+            if fnmatch.fnmatch(filename, pattern):
+                return True
+        return False
+
+    def should_exclude_from_ui(
+        self,
+        file_path: Path,
+        hide_system_files: bool = True,
+        system_file_patterns: list[str] | None = None,
+    ) -> bool:
+        """
+        UI表示から除外すべきファイルかどうかを判定（CLI/TUI共通）。
+
+        2種類のフィルタリングを統合:
+        1. セキュリティ保護（master.key, archives/）: 常に除外、設定で変更不可
+        2. 見た目系システムファイル（.DS_Store等）: hide_system_filesで切り替え可能
+
+        Args:
+            file_path: チェックするファイルパス
+            hide_system_files: システムファイルを非表示にするかどうか
+            system_file_patterns: システムファイルパターンのリスト
+
+        Returns:
+            除外すべきならTrue
+        """
+        # 1. セキュリティ保護パス（常にチェック - 設定で無効化不可）
+        if self.is_system_protected_path(file_path):
+            return True
+
+        # 2. 見た目上のシステムファイル（設定による）
+        if hide_system_files and system_file_patterns:
+            file_path_obj = Path(file_path)
+            filename = file_path_obj.name
+            if self.is_cosmetic_system_file(filename, system_file_patterns):
+                return True
+            # 相対パス全体でもチェック（パス内にパターンマッチするものがあるか）
+            for part in file_path_obj.parts:
+                if self.is_cosmetic_system_file(part, system_file_patterns):
+                    return True
+
+        return False
+
     def get_backup_dir(self, machine_name: str) -> Path:
         """バックアップディレクトリのパスを取得"""
         return self.repo_root / machine_name
