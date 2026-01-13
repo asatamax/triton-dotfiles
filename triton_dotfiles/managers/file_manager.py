@@ -16,9 +16,10 @@ from colorama import Fore, Style, init
 # システム保護パス設定
 # 注意: 実際の保護は is_system_protected_path() メソッドで TRITON_DIR を使用して動的に行われます
 # 以下のパスは ${TRITON_DIR} 内で保護される相対パス:
-# - master.key        # 暗号化キー（セキュリティクリティカル）
-# - archives/         # アーカイブフォルダ（無限再帰防止）
-# - archives/**       # アーカイブフォルダ内容
+# - master.key              # 暗号化キー（セキュリティクリティカル）
+# - archives/               # アーカイブフォルダ（無限再帰防止）
+# - archives/**             # アーカイブフォルダ内容
+# - .version_cache.json     # バージョンチェックキャッシュ（一時ファイル）
 #
 # 注意: config.yml は意図的に保護対象外（ユーザーがバックアップしたい場合があるため）
 
@@ -198,6 +199,10 @@ class FileManager:
 
                 # archives/フォルダとその中身の保護（無限再帰防止）
                 if relative_str == "archives" or relative_str.startswith("archives/"):
+                    return True
+
+                # .version_cache.jsonの保護（一時キャッシュファイル）
+                if relative_str == ".version_cache.json":
                     return True
 
                 # config.ymlは保護しない（バックアップ可能）

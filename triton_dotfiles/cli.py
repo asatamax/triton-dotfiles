@@ -98,6 +98,28 @@ def cli(ctx, triton_dir, version, skip_startup):
         if version_info["static_version"]:
             click.echo(f"Static version: {version_info['static_version']}")
 
+        # Check for updates
+        try:
+            from .version_check import check_for_updates
+
+            result = check_for_updates()
+            if result.update_available and result.latest_version:
+                click.echo()
+                click.echo(
+                    f"{Fore.YELLOW}Update available: v{result.latest_version}{Style.RESET_ALL}"
+                )
+                click.echo(
+                    f"  Run: {Fore.CYAN}uv tool upgrade triton-dotfiles{Style.RESET_ALL}"
+                )
+            elif result.latest_version:
+                click.echo()
+                click.echo(
+                    f"{Fore.GREEN}You are using the latest version.{Style.RESET_ALL}"
+                )
+        except Exception:
+            # Silently ignore version check errors
+            pass
+
         return
 
     # Determine config file location (except when launching TUI)
