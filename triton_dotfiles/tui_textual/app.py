@@ -206,8 +206,8 @@ class TritonTUIApp(App):
             message = await loop.run_in_executor(None, get_update_message)
 
             if message:
-                # Update status bar on main thread
-                self.call_from_thread(self._set_update_message, message)
+                # After await, we're back in the main event loop
+                self._set_update_message(message)
         except Exception:
             # Silently ignore any errors during version check
             pass

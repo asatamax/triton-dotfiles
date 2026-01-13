@@ -198,11 +198,11 @@ def get_update_message() -> str | None:
     """Get update notification message if update is available.
 
     Returns:
-        Message string like "Update: v1.0.1" or None if no update.
+        Message string like "Update available: v1.0.1" or None if no update.
     """
     result = check_for_updates()
 
     if result.update_available and result.latest_version:
-        return f"Update: v{result.latest_version}"
+        return f"Update available: v{result.latest_version}"
 
     return None
