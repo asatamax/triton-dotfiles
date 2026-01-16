@@ -52,6 +52,11 @@ Issues = "https://github.com/asatamax/triton-dotfiles/issues"
 [project.scripts]
 triton = "triton_dotfiles.cli:cli"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["triton_dotfiles*"]

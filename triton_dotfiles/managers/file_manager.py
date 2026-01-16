@@ -28,6 +28,7 @@ from ..utils import (
     import_class_from_module,
     get_triton_dir,
     matches_glob_pattern,
+    separate_direct_and_pattern_files,
 )
 from .file_comparison_manager import FileComparisonManager, ComparisonMethod
 
@@ -412,6 +413,9 @@ class FileManager:
         パターンは順番に評価され、最後にマッチしたパターンの種類で判定。
         これによりre-inclusion（一度除外したものを再度含める）が可能。
 
+        最適化: 相対パス指定（例: "app/.env"）はディレクトリ走査なしで
+        直接ファイル存在確認を行う。
+
         Args:
             target: バックアップ対象の設定
             match_result: パターンマッチング結果を記録（dry-run出力用、省略可）
@@ -426,12 +430,62 @@ class FileManager:
             return
 
         patterns = target.files or []
-        has_patterns = bool(patterns)
+
+        # Separate direct paths from glob patterns for optimization
+        direct_paths, glob_patterns = separate_direct_and_pattern_files(patterns)
+        has_glob_patterns = bool(glob_patterns)
+
+        # Track yielded paths to prevent duplicates
+        yielded_paths: set[Path] = set()
+
+        # === Phase 1: Direct path processing (no directory scan needed) ===
+        for direct_path in direct_paths:
+            # Normalize Windows backslashes to forward slashes
+            normalized_path = direct_path.replace("\\", "/")
+            file_path = expanded_path / normalized_path
+
+            if not file_path.is_file():
+                # File doesn't exist - silently skip
+                continue
+
+            if match_result:
+                match_result.total_scanned += 1
+
+            relative_path = Path(normalized_path)
+
+            # Global blacklist check
+            blacklist_match = self._check_blacklist_match(file_path)
+            if blacklist_match:
+                if match_result:
+                    match_result.blacklist_blocked.append(
+                        (str(relative_path), blacklist_match)
+                    )
+                continue
+
+            # Mark as yielded to prevent duplicates
+            yielded_paths.add(file_path)
+
+            if match_result:
+                match_result.pattern_matched.append(
+                    (str(relative_path), f"direct:{direct_path}")
+                )
+                match_result.would_backup += 1
+
+            yield file_path, str(relative_path)
+
+        # === Phase 2: Glob pattern processing ===
+        # Skip if no glob patterns and we have direct paths (all processed above)
+        if not has_glob_patterns and direct_paths:
+            return
 
         if target.recursive:
             # 再帰的にファイルを収集
             for file_path in expanded_path.rglob("*"):
                 if not file_path.is_file():
+                    continue
+
+                # Skip if already processed as direct path
+                if file_path in yielded_paths:
                     continue
 
                 if match_result:
@@ -449,9 +503,9 @@ class FileManager:
                     continue
 
                 # Priority 2 & 3: Sequential pattern evaluation (re-inclusion対応)
-                if has_patterns:
+                if has_glob_patterns:
                     included, matched_pattern = evaluate_patterns_sequential(
-                        relative_path, patterns
+                        relative_path, glob_patterns
                     )
 
                     if not included:
@@ -484,6 +538,10 @@ class FileManager:
                 if not file_path.is_file():
                     continue
 
+                # Skip if already processed as direct path
+                if file_path in yielded_paths:
+                    continue
+
                 if match_result:
                     match_result.total_scanned += 1
 
@@ -499,9 +557,9 @@ class FileManager:
                     continue
 
                 # Sequential pattern evaluation (re-inclusion対応)
-                if has_patterns:
+                if has_glob_patterns:
                     included, matched_pattern = evaluate_patterns_sequential(
-                        relative_path, patterns
+                        relative_path, glob_patterns
                     )
 
                     if not included:

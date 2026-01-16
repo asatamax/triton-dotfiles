@@ -139,6 +139,17 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 "Creates config.yml.bak.N backup (unless --no-backup)",
                 "Modifies config.yml",
             ],
+            "performance_tips": {
+                "direct_path_optimization": {
+                    "description": "File patterns with '/' (no glob chars) are direct paths",
+                    "benefit": "Direct paths use stat() instead of scanning, much faster for large directories",
+                    "example": {
+                        "slow": "--files '**/*.env' --recursive (scans entire tree)",
+                        "fast": "--files 'app/.env,config/settings.yml' (direct stat, no scan)",
+                    },
+                    "rule": "Use 'subdir/file.ext' format for specific files in large directories",
+                },
+            },
         },
         "target remove": {
             "description": "Remove a backup target from the configuration",
@@ -1272,6 +1283,40 @@ CONFIG_FILE_SCHEMA: dict[str, Any] = {
                     "type": "array[string]",
                     "required": False,
                     "description": "File patterns to encrypt (overrides global encrypt_list)",
+                },
+            },
+            "performance_optimization": {
+                "description": "Direct path optimization for large directories",
+                "rule": "Files patterns containing '/' (without glob chars) are treated as direct paths",
+                "benefit": "Direct paths skip directory scanning, using stat() instead of rglob()",
+                "examples": {
+                    "direct_path": {
+                        "pattern": "app/config/.env",
+                        "behavior": "Checks path/app/config/.env directly (no scan)",
+                    },
+                    "glob_pattern": {
+                        "pattern": "*.yml",
+                        "behavior": "Scans directory and matches files",
+                    },
+                },
+                "best_practice": [
+                    "For large directories, prefer direct paths over glob patterns",
+                    "Use 'subdir/file.ext' instead of '**/*.ext' when targeting specific files",
+                    "Direct paths work without 'recursive: true'",
+                    "Mixing direct paths and patterns: direct paths processed first, then patterns",
+                ],
+                "example_config": {
+                    "inefficient": {
+                        "path": "~/large-repo",
+                        "files": ["**/*.env"],
+                        "recursive": True,
+                        "note": "Scans entire directory tree",
+                    },
+                    "optimized": {
+                        "path": "~/large-repo",
+                        "files": ["app/.env", "config/settings.yml"],
+                        "note": "Direct stat() for each file, no scanning",
+                    },
                 },
             },
         },
