@@ -8,7 +8,7 @@ import re
 import sys
 import fnmatch
 from pathlib import Path, PurePosixPath
-from typing import Any, Type, List
+from typing import Any, Type, List, Tuple
 
 
 def safe_import(
@@ -171,3 +171,77 @@ def matches_any_pattern(file_path: Path, patterns: List[str]) -> bool:
         if matches_glob_pattern(file_path, pattern):
             return True
     return False
+
+
+# Glob special characters pattern for direct path detection
+GLOB_CHARS_PATTERN = re.compile(r"[*?\[\]]")
+
+
+def is_direct_path(pattern: str) -> bool:
+    """
+    Determine if a pattern is a direct path (not a glob pattern).
+
+    A direct path contains path separators (/ or \\) but no glob wildcards.
+    This is used to optimize file collection by directly checking file existence
+    instead of scanning entire directory trees.
+
+    Args:
+        pattern: Pattern string to check.
+
+    Returns:
+        True if the pattern is a direct path, False if it's a glob pattern.
+
+    Examples:
+        >>> is_direct_path("b4f-apps/.env")           # True (direct path)
+        >>> is_direct_path("src/main/config.yml")     # True (direct path)
+        >>> is_direct_path(".zshrc")                  # False (no path separator)
+        >>> is_direct_path("**/*.yml")                # False (contains glob)
+        >>> is_direct_path("!b4f-apps/.env")          # False (exclusion pattern)
+    """
+    # Empty string is not a direct path
+    if not pattern:
+        return False
+
+    # Exclusion patterns (starting with !) are not direct paths
+    if pattern.startswith("!"):
+        return False
+
+    # Patterns containing glob characters are not direct paths
+    if GLOB_CHARS_PATTERN.search(pattern):
+        return False
+
+    # Direct path must contain a path separator (POSIX or Windows)
+    return "/" in pattern or "\\" in pattern
+
+
+def separate_direct_and_pattern_files(
+    patterns: List[str],
+) -> Tuple[List[str], List[str]]:
+    """
+    Separate a list of file patterns into direct paths and glob patterns.
+
+    This enables optimization where direct paths can be checked with a simple
+    stat() call instead of scanning the entire directory tree.
+
+    Args:
+        patterns: List of file patterns from config.
+
+    Returns:
+        Tuple of (direct_paths, glob_patterns).
+        - direct_paths: Paths that can be directly accessed (e.g., "app/.env")
+        - glob_patterns: Patterns requiring directory scanning (e.g., "*.py")
+
+    Examples:
+        >>> separate_direct_and_pattern_files(["app/.env", "*.yml", "!*.log"])
+        (["app/.env"], ["*.yml", "!*.log"])
+    """
+    direct_paths = []
+    glob_patterns = []
+
+    for p in patterns:
+        if is_direct_path(p):
+            direct_paths.append(p)
+        else:
+            glob_patterns.append(p)
+
+    return direct_paths, glob_patterns
