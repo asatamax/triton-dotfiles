@@ -624,9 +624,11 @@ class ConfigManager:
             ~/ -> ~/
             ./relative -> ~/current/working/dir/relative (if under home)
             /etc/hosts -> /etc/hosts (unchanged)
+            ${ENV_VAR}/path -> ~/expanded/path (if under home)
         """
-        # Expand to absolute path first
-        expanded = Path(path).expanduser().resolve()
+        # Expand environment variables first, then ~ and resolve to absolute path
+        env_expanded = os.path.expandvars(path)
+        expanded = Path(env_expanded).expanduser().resolve()
         home = Path.home()
 
         # If path is under user home, convert to ~/ format
@@ -668,7 +670,8 @@ class ConfigManager:
     def find_target_by_path(self, normalized_path: str) -> Optional[Target]:
         """Find existing target by normalized path."""
         for target in self.config.targets:
-            if target.path == normalized_path:
+            # Both paths must be normalized to ~/format for consistent comparison
+            if self.normalize_path(target.path) == normalized_path:
                 return target
         return None
 
@@ -844,7 +847,9 @@ class ConfigManager:
 
         # Load raw config, add target, and save (preserves environment variables)
         raw_data = self._load_raw_config()
-        new_target_dict: Dict[str, Any] = {"path": normalized}
+        # Preserve environment variable format if present, otherwise use normalized path
+        path_to_save = path if "${" in path else normalized
+        new_target_dict: Dict[str, Any] = {"path": path_to_save}
         if files:
             new_target_dict["files"] = files
         if recursive:
@@ -890,10 +895,11 @@ class ConfigManager:
         normalized = self.normalize_path(path)
 
         # Find target index in expanded config
+        # Both paths must be normalized to ~/format for consistent comparison
         target_index = None
         removed_target = None
         for i, target in enumerate(self.config.targets):
-            if target.path == normalized:
+            if self.normalize_path(target.path) == normalized:
                 target_index = i
                 removed_target = target
                 break
@@ -955,9 +961,10 @@ class ConfigManager:
         normalized = self.normalize_path(path)
 
         # Find existing target
+        # Both paths must be normalized to ~/format for consistent comparison
         target_index = None
         for i, target in enumerate(self.config.targets):
-            if target.path == normalized:
+            if self.normalize_path(target.path) == normalized:
                 target_index = i
                 break
 
