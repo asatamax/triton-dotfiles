@@ -642,6 +642,71 @@ class ConfigManager:
             # Path is not under home directory
             return str(expanded)
 
+    def validate_target_path(self, path: str) -> tuple[bool, Optional[str]]:
+        """
+        Validate that a target path is semantically valid.
+
+        Rejects paths that contain meaningless components like trailing dots
+        which would be normalized away by the filesystem, potentially causing
+        confusion about which target is being referenced.
+
+        Args:
+            path: The path to validate (before normalization)
+
+        Returns:
+            Tuple of (is_valid, error_message).
+            If valid, returns (True, None).
+            If invalid, returns (False, "error description").
+
+        Examples of invalid paths:
+            ~/. -> Invalid (trailing dot, same as ~/)
+            ~/foo/. -> Invalid (trailing dot, same as ~/foo)
+            ~/./foo -> Invalid (meaningless dot component)
+            ~/./ -> Invalid (trailing dot after dot-file-like path)
+        """
+        # Expand ~ but don't resolve (we want to check the raw structure)
+        if path.startswith("~"):
+            check_path = path
+        else:
+            # For absolute/relative paths, use as-is
+            check_path = path
+
+        # Split into components for analysis
+        # Handle both ~/path and /absolute/path formats
+        if check_path.startswith("~/"):
+            components = check_path[2:].rstrip("/").split("/")
+            prefix = "~/"
+        elif check_path == "~":
+            # Just ~ is valid (home directory)
+            return (True, None)
+        elif check_path.startswith("/"):
+            components = check_path[1:].rstrip("/").split("/")
+            prefix = "/"
+        else:
+            components = check_path.rstrip("/").split("/")
+            prefix = ""
+
+        # Check for problematic components
+        for i, component in enumerate(components):
+            if component == ".":
+                if i == len(components) - 1:
+                    # Trailing single dot: ~/foo/. or ~/.
+                    return (
+                        False,
+                        f"Invalid path '{path}': trailing '.' is meaningless "
+                        f"(equivalent to '{prefix}{'/'.join(components[:-1]) or ''}').  "
+                        f"Use '{prefix}{'/'.join(components[:-1])}' instead.",
+                    )
+                else:
+                    # Middle single dot: ~/./foo
+                    return (
+                        False,
+                        f"Invalid path '{path}': contains meaningless '.' component. "
+                        f"Use a canonical path without '.' components.",
+                    )
+
+        return (True, None)
+
     def backup_config_file(self) -> Optional[Path]:
         """
         Backup config file to archives/config/{timestamp}/ directory.
@@ -796,6 +861,14 @@ class ConfigManager:
         Returns:
             dict with 'success', 'message', and optionally 'backup_path'
         """
+        # Validate path before normalization to catch meaningless paths like ~/.
+        is_valid, error_message = self.validate_target_path(path)
+        if not is_valid:
+            return {
+                "success": False,
+                "message": error_message,
+            }
+
         normalized = self.normalize_path(path)
 
         # Check for exact duplicate
@@ -892,6 +965,14 @@ class ConfigManager:
         Returns:
             dict with 'success', 'message', and optionally 'backup_path'
         """
+        # Validate path before normalization to catch meaningless paths like ~/.
+        is_valid, error_message = self.validate_target_path(path)
+        if not is_valid:
+            return {
+                "success": False,
+                "message": error_message,
+            }
+
         normalized = self.normalize_path(path)
 
         # Find target index in expanded config
@@ -1121,6 +1202,20 @@ class ConfigManager:
 
         Returns detailed information about the path and any conflicts.
         """
+        # Validate path first to catch meaningless paths like ~/.
+        is_valid, error_message = self.validate_target_path(path)
+        if not is_valid:
+            return {
+                "path": path,
+                "expanded_path": None,
+                "exists": False,
+                "is_directory": None,
+                "is_file": None,
+                "conflicts": [error_message],
+                "warnings": [],
+                "suggestions": [],
+            }
+
         normalized = self.normalize_path(path)
         expanded = Path(normalized).expanduser()
 
