@@ -947,7 +947,7 @@ class InitWizard:
         click.echo()
         click.echo(f"{Fore.CYAN}For AI/LLM agents:{Style.RESET_ALL}")
         click.echo(
-            f"  {Fore.GREEN}triton config schema{Style.RESET_ALL}   # Get command schema for automation"
+            f"  {Fore.GREEN}triton config --schema{Style.RESET_ALL}  # Get command schema for automation"
         )
         click.echo('  Example: "Please add ~/.aws to my encrypted backup list"')
         click.echo()
