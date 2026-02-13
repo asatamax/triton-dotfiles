@@ -2255,6 +2255,66 @@ def target_check(ctx, path, as_json):
         sys.exit(1)
 
 
+@config_target.command("ensure")
+@click.argument("file_path")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--no-backup", is_flag=True, help="Don't backup config before modifying")
+@click.pass_context
+def target_ensure(ctx, file_path, as_json, no_backup):
+    """Ensure a file is backed up. Creates or modifies targets as needed.
+
+    Idempotent: if the file is already backed up, does nothing.
+    Adds to the deepest matching target to prevent duplicates.
+
+    Examples:
+        triton config target ensure ~/.claude/CLAUDE.md
+        triton config target ensure ~/.ssh/config --json
+    """
+    try:
+        config_manager = ConfigManager(ctx.obj["config_path"])
+        result = config_manager.ensure_file_backed_up(file_path, backup=not no_backup)
+
+        if as_json:
+            import json
+
+            click.echo(json.dumps(result, indent=2))
+            if not result["success"]:
+                sys.exit(1)
+        else:
+            if not result["success"]:
+                click.echo(
+                    f"{Fore.RED}Error: {result.get('message', 'Unknown error')}{Style.RESET_ALL}"
+                )
+                sys.exit(1)
+
+            action = result["action"]
+            target = result.get("target", "?")
+            filename = result.get("file", "?")
+
+            if action == "none":
+                pattern = result.get("matched_pattern", "")
+                parts = [f"target: {target}"]
+                if pattern:
+                    parts.append(f"pattern: {pattern}")
+                click.echo(
+                    f"{Fore.GREEN}✓ Already backed up ({', '.join(parts)}){Style.RESET_ALL}"
+                )
+            elif action == "added_to_existing":
+                click.echo(f"{Fore.GREEN}✓ Added to target {target}{Style.RESET_ALL}")
+                if result.get("backup_path"):
+                    click.echo(f"   Config backed up to: {result['backup_path']}")
+            elif action == "created_target":
+                click.echo(
+                    f"{Fore.GREEN}✓ Created new target {target} with file {filename}{Style.RESET_ALL}"
+                )
+                if result.get("backup_path"):
+                    click.echo(f"   Config backed up to: {result['backup_path']}")
+
+    except Exception as e:
+        click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        sys.exit(1)
+
+
 @config_target.command("modify")
 @click.argument("path")
 @click.option("--add-files", help="Comma-separated list of file patterns to add")

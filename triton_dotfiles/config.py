@@ -934,6 +934,144 @@ class ConfigManager:
 
         return (False, None, None)
 
+    def _find_deepest_ancestor_target(
+        self, normalized_file_path: str
+    ) -> Optional[Target]:
+        """Find the deepest (most specific) target that is an ancestor of the file path.
+
+        Used by ensure_file_backed_up() to determine the best target to add a file to,
+        preventing duplicate additions when nested targets exist.
+
+        Args:
+            normalized_file_path: Normalized file path (e.g., ~/.claude/skills/foo.md)
+
+        Returns:
+            The deepest ancestor Target, or None if no target is an ancestor.
+        """
+        file_resolved = Path(normalized_file_path).expanduser().resolve()
+        candidates: list[tuple[int, Target]] = []
+
+        for target in self.config.targets:
+            target_resolved = Path(target.path).expanduser().resolve()
+            try:
+                file_resolved.relative_to(target_resolved)
+                depth = len(target_resolved.parts)
+                candidates.append((depth, target))
+            except ValueError:
+                continue
+
+        if not candidates:
+            return None
+
+        # Sort by depth descending (deepest first)
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
+
+    def ensure_file_backed_up(self, file_path: str, backup: bool = True) -> dict:
+        """Ensure a file is backed up by creating or modifying targets as needed.
+
+        Idempotent: if the file is already backed up, returns action='none'.
+
+        Args:
+            file_path: Path to the file to ensure is backed up
+            backup: Whether to backup config.yml before modifying
+
+        Returns:
+            Dict with success, action, backed_up, file, target, matched_pattern, backup_path
+        """
+        normalized = self.normalize_path(file_path)
+        expanded = Path(normalized).expanduser().resolve()
+
+        # Reject directories
+        if expanded.exists() and expanded.is_dir():
+            return {
+                "success": False,
+                "action": "error",
+                "message": "target ensure only accepts file paths, not directories",
+                "backed_up": False,
+                "file": expanded.name,
+                "target": None,
+            }
+
+        # Check if already backed up
+        backed_up, matched_target, matched_pattern = self.is_path_backed_up(normalized)
+        if backed_up:
+            return {
+                "success": True,
+                "action": "none",
+                "backed_up": True,
+                "file": expanded.name,
+                "target": matched_target["path"] if matched_target else None,
+                "matched_pattern": matched_pattern,
+            }
+
+        # Find the deepest ancestor target
+        deepest_target = self._find_deepest_ancestor_target(normalized)
+
+        if deepest_target:
+            # Add file to existing target
+            target_resolved = Path(deepest_target.path).expanduser().resolve()
+            relative = expanded.relative_to(target_resolved)
+            relative_str = str(relative)
+
+            result = self.modify_target(
+                deepest_target.path,
+                add_files=[relative_str],
+                backup=backup,
+            )
+
+            if result["success"]:
+                return {
+                    "success": True,
+                    "action": "added_to_existing",
+                    "backed_up": True,
+                    "file": expanded.name,
+                    "target": deepest_target.path,
+                    "backup_path": str(result["backup_path"])
+                    if result.get("backup_path")
+                    else None,
+                }
+            else:
+                return {
+                    "success": False,
+                    "action": "error",
+                    "message": result["message"],
+                    "backed_up": False,
+                    "file": expanded.name,
+                    "target": deepest_target.path,
+                }
+        else:
+            # Create new target for the parent directory
+            parent_normalized = self.normalize_path(str(expanded.parent))
+            filename = expanded.name
+
+            result = self.add_target(
+                parent_normalized,
+                files=[filename],
+                backup=backup,
+            )
+
+            if result["success"]:
+                return {
+                    "success": True,
+                    "action": "created_target",
+                    "backed_up": True,
+                    "file": filename,
+                    "target": parent_normalized,
+                    "backup_path": str(result["backup_path"])
+                    if result.get("backup_path")
+                    else None,
+                }
+            else:
+                return {
+                    "success": False,
+                    "action": "error",
+                    "message": result["message"],
+                    "backed_up": False,
+                    "file": filename,
+                    "target": parent_normalized,
+                }
+
     def would_cover_existing_targets(
         self, normalized_path: str, recursive: bool
     ) -> list[str]:
