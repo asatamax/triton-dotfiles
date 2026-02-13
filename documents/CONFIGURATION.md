@@ -303,10 +303,14 @@ triton config view               # Display raw YAML
 triton config target list
 triton config target list --json
 triton config target list --resolve  # Show actual files
+triton config target list --path ~/.docker --json  # Filter by path
 
-# Check before adding (recommended)
+# Check backup coverage
 triton config target check ~/.docker
-triton config target check ~/.config/app --json
+triton config target check ~/.config/app --json  # Includes backed_up field
+
+# Ensure a file is backed up (idempotent, recommended for automation)
+triton config target ensure ~/.zshrc --json
 
 # Add targets
 triton config target add ~/.docker --recursive
