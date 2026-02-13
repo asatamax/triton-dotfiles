@@ -1931,18 +1931,34 @@ def config_target():
 @click.option(
     "--resolve", is_flag=True, help="Resolve and show actual files for each target"
 )
+@click.option(
+    "--path",
+    "filter_path",
+    default=None,
+    help="Filter by target path (exact match after normalization)",
+)
 @click.pass_context
-def target_list(ctx, as_json, resolve):
+def target_list(ctx, as_json, resolve, filter_path):
     """List all configured targets."""
     try:
         config_manager = ConfigManager(ctx.obj["config_path"])
         file_manager = FileManager(config_manager) if resolve else None
 
+        # Build filtered target list
+        all_targets = list(enumerate(config_manager.config.targets))
+        if filter_path:
+            normalized_filter = config_manager.normalize_path(filter_path)
+            all_targets = [
+                (i, t)
+                for i, t in all_targets
+                if config_manager.normalize_path(t.path) == normalized_filter
+            ]
+
         if as_json:
             import json
 
             targets = []
-            for i, target in enumerate(config_manager.config.targets):
+            for i, target in all_targets:
                 target_data = {
                     "index": i,
                     "path": target.path,
@@ -1958,8 +1974,15 @@ def target_list(ctx, as_json, resolve):
                 targets.append(target_data)
             click.echo(json.dumps(targets, indent=2))
         else:
+            if not all_targets:
+                if filter_path:
+                    click.echo("No matching targets found")
+                else:
+                    click.echo("No targets configured")
+                return
+
             click.echo(f"{Fore.CYAN}Configured targets:{Style.RESET_ALL}\n")
-            for i, target in enumerate(config_manager.config.targets):
+            for i, target in all_targets:
                 mode = "recursive" if target.recursive else "files"
 
                 click.echo(f"  {Fore.GREEN}[{i}]{Style.RESET_ALL} {target.path}")
@@ -2225,9 +2248,7 @@ def target_check(ctx, path, as_json):
                     f"\n  {Fore.GREEN}✓ Backed up ({', '.join(parts)}){Style.RESET_ALL}"
                 )
             else:
-                click.echo(
-                    f"\n  {Fore.RED}✗ Not backed up{Style.RESET_ALL}"
-                )
+                click.echo(f"\n  {Fore.RED}✗ Not backed up{Style.RESET_ALL}")
 
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
