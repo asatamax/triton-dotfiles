@@ -121,7 +121,11 @@ Tritonは設定を `~/.config/triton/` に保存します：
 Claude Codeなどのツールを使用している場合、`triton-config`スキルで設定を管理できます：
 
 ```bash
+# スキルテンプレートをインストール
+cp -r extras/skills/triton-config ~/.claude/skills/
+
 # AIが以下のようなコマンドを実行できます：
+triton config target ensure ~/.zshrc --json   # ファイルのバックアップを保証（冪等）
 triton config target add ~/.ssh --recursive
 triton config target add ~/ --files '.zshrc,.gitconfig'
 ```
