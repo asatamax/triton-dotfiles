@@ -813,6 +813,127 @@ class ConfigManager:
 
         return (False, None, None)
 
+    def _match_file_against_target(
+        self, normalized_file_path: str, target: Target
+    ) -> tuple[bool, Optional[str]]:
+        """Check if a file matches a target's file patterns.
+
+        Args:
+            normalized_file_path: Normalized file path (e.g., ~/.claude/CLAUDE.md)
+            target: Target to check against
+
+        Returns:
+            Tuple of (is_matched, matched_pattern)
+        """
+        import fnmatch
+
+        file_path = Path(normalized_file_path).expanduser().resolve()
+        target_path = Path(target.path).expanduser().resolve()
+
+        try:
+            relative_path = file_path.relative_to(target_path)
+        except ValueError:
+            return (False, None)
+
+        relative_str = str(relative_path)
+
+        # Recursive target with no files filter = backs up everything
+        if target.recursive and not target.files:
+            return (True, "**/*")
+
+        for file_pattern in target.files:
+            if relative_str == file_pattern:
+                return (True, file_pattern)
+            if file_pattern == "**/*":
+                return (True, "**/*")
+            if fnmatch.fnmatch(relative_str, file_pattern):
+                return (True, file_pattern)
+
+        return (False, None)
+
+    def is_path_backed_up(
+        self, normalized_path: str
+    ) -> tuple[bool, Optional[dict], Optional[str]]:
+        """Check if a path is backed up by any existing target.
+
+        Args:
+            normalized_path: Normalized path to check (e.g., ~/.claude/CLAUDE.md)
+
+        Returns:
+            Tuple of (backed_up, matched_target_info, matched_pattern)
+            matched_target_info is {"path": str, "recursive": bool} or None
+        """
+        check_path = Path(normalized_path).expanduser().resolve()
+
+        # Determine if path is a file or directory
+        is_dir = check_path.is_dir() if check_path.exists() else False
+        is_file = check_path.is_file() if check_path.exists() else False
+
+        # For non-existent paths, guess based on whether it has an extension
+        if not check_path.exists():
+            is_file = bool(check_path.suffix)
+            is_dir = not is_file
+
+        if is_file:
+            # Check non-recursive targets first
+            covered, target_path, matched_pattern = (
+                self.is_file_covered_by_non_recursive_target(normalized_path)
+            )
+            if covered:
+                target = self.find_target_by_path(self.normalize_path(target_path))
+                return (
+                    True,
+                    {
+                        "path": target_path,
+                        "recursive": target.recursive if target else False,
+                    },
+                    matched_pattern,
+                )
+
+            # Check recursive targets with pattern matching
+            for target in self.config.targets:
+                if not target.recursive:
+                    continue
+
+                target_resolved = Path(target.path).expanduser().resolve()
+                try:
+                    check_path.relative_to(target_resolved)
+                except ValueError:
+                    continue
+
+                matched, pattern = self._match_file_against_target(
+                    normalized_path, target
+                )
+                if matched:
+                    return (
+                        True,
+                        {"path": target.path, "recursive": True},
+                        pattern,
+                    )
+
+        elif is_dir:
+            # Exact match with existing target
+            existing = self.find_target_by_path(normalized_path)
+            if existing:
+                return (
+                    True,
+                    {"path": existing.path, "recursive": existing.recursive},
+                    None,
+                )
+
+            # Covered by recursive target
+            is_covered, covering_path = self.is_path_covered_by_recursive(
+                normalized_path
+            )
+            if is_covered:
+                return (
+                    True,
+                    {"path": covering_path, "recursive": True},
+                    None,
+                )
+
+        return (False, None, None)
+
     def would_cover_existing_targets(
         self, normalized_path: str, recursive: bool
     ) -> list[str]:
@@ -1214,6 +1335,9 @@ class ConfigManager:
                 "conflicts": [error_message],
                 "warnings": [],
                 "suggestions": [],
+                "backed_up": False,
+                "matched_target": None,
+                "matched_pattern": None,
             }
 
         normalized = self.normalize_path(path)
@@ -1274,6 +1398,12 @@ class ConfigManager:
                 result["suggestions"].append(
                     f'triton config target add {parent} --files "{expanded.name}"'
                 )
+
+        # Check backup coverage
+        backed_up, matched_target, matched_pattern = self.is_path_backed_up(normalized)
+        result["backed_up"] = backed_up
+        result["matched_target"] = matched_target
+        result["matched_pattern"] = matched_pattern
 
         return result
 

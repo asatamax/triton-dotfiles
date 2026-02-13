@@ -2214,6 +2214,21 @@ def target_check(ctx, path, as_json):
                 for suggestion in result["suggestions"]:
                     click.echo(f"  $ {suggestion}")
 
+            # Show backup coverage status
+            if result.get("backed_up"):
+                target_info = result.get("matched_target", {})
+                pattern = result.get("matched_pattern")
+                parts = [f"target: {target_info.get('path', '?')}"]
+                if pattern:
+                    parts.append(f"pattern: {pattern}")
+                click.echo(
+                    f"\n  {Fore.GREEN}✓ Backed up ({', '.join(parts)}){Style.RESET_ALL}"
+                )
+            else:
+                click.echo(
+                    f"\n  {Fore.RED}✗ Not backed up{Style.RESET_ALL}"
+                )
+
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
