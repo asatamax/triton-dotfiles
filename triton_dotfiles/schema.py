@@ -52,11 +52,17 @@ CONFIG_SCHEMA: dict[str, Any] = {
                     "type": "flag",
                     "description": "Resolve and show actual files for each target",
                 },
+                "--path": {
+                    "type": "string",
+                    "description": "Filter by target path (exact match after normalization)",
+                    "examples": ["~/.claude", "~/.ssh"],
+                },
             },
             "examples": [
                 "triton config target list",
                 "triton config target list --json",
                 "triton config target list --resolve",
+                "triton config target list --path ~/.claude --json",
             ],
             "output_fields": ["path", "files", "recursive", "encrypt_files"],
         },
@@ -91,6 +97,9 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 "conflicts": "List of reasons why target cannot be added",
                 "warnings": "List of potential issues",
                 "suggestions": "Recommended commands to add this target",
+                "backed_up": "Whether this path is currently backed up by any target",
+                "matched_target": "Target that covers this path ({path, recursive} or null)",
+                "matched_pattern": "File pattern that matched (e.g., 'CLAUDE.md', '*.yml', or null)",
             },
         },
         "target add": {
@@ -253,6 +262,52 @@ CONFIG_SCHEMA: dict[str, Any] = {
             "side_effects": [
                 "Creates config backup in archives/config/{timestamp}/ (only when change is made)",
                 "Modifies config.yml targets section",
+            ],
+        },
+        "target ensure": {
+            "description": "Ensure a file is backed up. Idempotent: if already backed up, "
+            "does nothing. Otherwise adds the file to the most specific existing target, "
+            "or creates a new target.",
+            "arguments": {
+                "file_path": {
+                    "required": True,
+                    "type": "string",
+                    "description": "File path to ensure is backed up (files only, not directories)",
+                }
+            },
+            "options": {
+                "--json": {
+                    "type": "flag",
+                    "description": "Output as JSON for programmatic parsing",
+                },
+                "--no-backup": {
+                    "type": "flag",
+                    "description": "Skip creating config.yml backup before modifying",
+                },
+            },
+            "examples": [
+                "triton config target ensure ~/.claude/CLAUDE.md --json",
+                "triton config target ensure ~/.ssh/config",
+            ],
+            "idempotent": True,
+            "idempotent_behavior": "Returns action='none' if file is already backed up",
+            "returns": {
+                "success": "Whether operation succeeded",
+                "action": "One of: 'none', 'added_to_existing', 'created_target'",
+                "backed_up": "Always true on success",
+                "file": "Filename that was ensured",
+                "target": "Target path that covers the file",
+                "matched_pattern": "Pattern that matches the file (for action='none')",
+                "backup_path": "Path to config backup (if config was modified)",
+            },
+            "constraints": [
+                "Only accepts file paths, not directories",
+                "Adds to the deepest (most specific) matching target to prevent duplicates",
+            ],
+            "side_effects": [
+                "May modify an existing target's files list",
+                "May create a new target",
+                "Creates config backup when changes are made (unless --no-backup)",
             ],
         },
         # --- Hook commands ---
@@ -1444,11 +1499,11 @@ def get_full_schema() -> dict[str, Any]:
     return {
         "name": "triton",
         "description": "Dotfiles management tool with TUI and CLI interfaces",
-        "schema_hint": "Use 'triton <command> schema' for detailed command documentation",
+        "schema_hint": "Use 'triton <command> --schema' for detailed command documentation",
         "available_schemas": [
-            "triton init schema",
-            "triton config schema",
-            "triton archive schema",
+            "triton init --schema",
+            "triton config --schema",
+            "triton archive --schema",
         ],
         "init": INIT_SCHEMA,
         "config": CONFIG_SCHEMA,

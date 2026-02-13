@@ -1351,7 +1351,7 @@ def _collect_validation_issues(config_manager: ConfigManager) -> dict:
 
 @config_cmd.group(
     "hook",
-    epilog="See also: triton config schema - Machine-readable command schema for LLM agents",
+    epilog="See also: triton config --schema - Machine-readable command schema for LLM agents",
 )
 def config_hook():
     """Startup hook management commands.
@@ -1494,7 +1494,7 @@ def hook_timeout(ctx, seconds, no_backup):
 
 @config_cmd.group(
     "exclude",
-    epilog="See also: triton config schema - Machine-readable command schema for LLM agents",
+    epilog="See also: triton config --schema - Machine-readable command schema for LLM agents",
 )
 def config_exclude():
     """Global exclude pattern management.
@@ -1610,7 +1610,7 @@ def exclude_remove(ctx, pattern, no_backup):
 
 @config_cmd.group(
     "encrypt",
-    epilog="See also: triton config schema - Machine-readable command schema for LLM agents",
+    epilog="See also: triton config --schema - Machine-readable command schema for LLM agents",
 )
 def config_encrypt():
     """Global encryption pattern management.
@@ -1726,7 +1726,7 @@ def encrypt_remove(ctx, pattern, no_backup):
 
 @config_cmd.group(
     "settings",
-    epilog="See also: triton config schema - Machine-readable command schema for LLM agents",
+    epilog="See also: triton config --schema - Machine-readable command schema for LLM agents",
 )
 def config_settings():
     """Scalar settings management.
@@ -1919,7 +1919,7 @@ def settings_unset(ctx, key, no_backup):
 
 @config_cmd.group(
     "target",
-    epilog="See also: triton config schema - Machine-readable command schema for LLM agents",
+    epilog="See also: triton config --schema - Machine-readable command schema for LLM agents",
 )
 def config_target():
     """Target management commands."""
