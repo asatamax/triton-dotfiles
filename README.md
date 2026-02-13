@@ -123,7 +123,11 @@ Triton stores its configuration in `~/.config/triton/`:
 If you use Claude Code or similar AI tools, the `triton-config` skill can manage your configuration:
 
 ```bash
-# The AI can run commands like:
+# Install the skill template
+cp -r extras/skills/triton-config ~/.claude/skills/
+
+# The AI can then run commands like:
+triton config target ensure ~/.zshrc --json   # Ensure a file is backed up (idempotent)
 triton config target add ~/.ssh --recursive
 triton config target add ~/ --files '.zshrc,.gitconfig'
 ```
