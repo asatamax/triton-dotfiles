@@ -307,11 +307,11 @@ class TUIFileAdapter:
                                 duplicate_info.inode
                             )
 
-            # 設定のtargetsからバックアップ対象ファイルを取得
-            target_file_paths = self._get_target_file_paths_from_config()
+            # 設定のtargetsからバックアップ対象ファイルをtarget情報付きで取得
+            target_file_entries = self._get_target_file_paths_from_config()
 
             # targetsベースの検索を実行
-            for target_path in target_file_paths:
+            for target_path, target_config, target_relative_path in target_file_entries:
                 # すでに存在するファイルかチェック
                 duplicate_info = self.file_comparison_manager._analyze_duplicate(
                     target_path,
@@ -345,11 +345,16 @@ class TUIFileAdapter:
                     # ファイルが属するtargetを取得
                     target_name = self._get_target_for_file(str(target_path))
 
+                    # 暗号化対象かどうかを判定
+                    will_encrypt = self.config_manager.should_encrypt_file(
+                        target_path, target_config, Path(target_relative_path)
+                    )
+
                     local_only_files.append(
                         {
                             "name": relative_path,
                             "backup_name": None,
-                            "encrypted": False,
+                            "encrypted": will_encrypt,
                             "size": file_size,
                             "local_exists": True,
                             "local_path": str(target_path),
@@ -384,8 +389,12 @@ class TUIFileAdapter:
         return local_only_files
 
     def _get_target_file_paths_from_config(self):
-        """設定のtargetsからローカル専用ファイルの候補パスを取得"""
-        target_paths = []
+        """設定のtargetsからローカル専用ファイルの候補パスをtarget情報付きで取得
+
+        Returns:
+            list[tuple[Path, Target, Path]]: (source_file, target, relative_path) のリスト
+        """
+        target_entries = []
 
         try:
             # file_managerのcollect_target_filesを利用
@@ -394,11 +403,11 @@ class TUIFileAdapter:
                     source_file,
                     relative_path,
                 ) in self.file_manager.collect_target_files(target):
-                    target_paths.append(source_file)
+                    target_entries.append((source_file, target, relative_path))
         except Exception as e:
             print(f"Error collecting target file paths: {e}")
 
-        return target_paths
+        return target_entries
 
     def get_file_diff(self, machine_id, file_info):
         """ファイルの差分を取得"""
