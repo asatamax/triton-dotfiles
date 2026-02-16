@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 # Static version (fallback)
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 
 def get_git_version() -> Optional[str]:

@@ -846,12 +846,19 @@ class TUIFileAdapter:
             success_count = len(result.get("copied", []))
             skip_count = len(result.get("skipped", []))
             error_count = len(result.get("errors", []))
+            cleaned_count = len(result.get("cleaned", []))
 
             # メッセージを生成
             if dry_run:
-                message = f"[DRY RUN] Would backup {success_count} files (skip {skip_count}, errors {error_count})"
+                msg = f"[DRY RUN] Would backup {success_count} files (skip {skip_count}, errors {error_count})"
+                if cleaned_count:
+                    msg += f", {cleaned_count} stale to clean"
+                message = msg
             else:
-                message = f"Backup completed: {success_count} files copied, {skip_count} skipped, {error_count} errors"
+                msg = f"Backup completed: {success_count} files copied, {skip_count} skipped, {error_count} errors"
+                if cleaned_count:
+                    msg += f", {cleaned_count} stale cleaned"
+                message = msg
 
             # 詳細情報を追加（CLIの出力 + ファイルリスト）
             details = []
@@ -873,6 +880,17 @@ class TUIFileAdapter:
                 details.append(f"{Fore.CYAN}Files skipped:{Style.RESET_ALL}")
                 for file_path in result["skipped"]:
                     details.append(f"  {Fore.YELLOW}!{Style.RESET_ALL} {file_path}")
+                details.append("")
+
+            if result.get("cleaned"):
+                header = (
+                    "Stale files that would be cleaned:"
+                    if dry_run
+                    else "Stale files cleaned:"
+                )
+                details.append(f"{Fore.CYAN}{header}{Style.RESET_ALL}")
+                for file_path in result["cleaned"]:
+                    details.append(f"  {Fore.YELLOW}✓{Style.RESET_ALL} {file_path}")
                 details.append("")
 
             if result.get("errors"):
