@@ -295,10 +295,13 @@ def backup(ctx, dry_run, machine):
         results = file_manager.backup_files(machine_name, dry_run=dry_run)
 
         # Display results
-        click.echo(
-            f"\nBackup complete: {len(results['copied'])} files copied, "
-            f"{len(results['unchanged'])} unchanged"
-        )
+        summary_parts = [
+            f"{len(results['copied'])} files copied",
+            f"{len(results['unchanged'])} unchanged",
+        ]
+        if results.get("cleaned"):
+            summary_parts.append(f"{len(results['cleaned'])} stale cleaned")
+        click.echo(f"\nBackup complete: {', '.join(summary_parts)}")
         if results["skipped"]:
             click.echo(
                 f"{Fore.YELLOW}Warning: {len(results['skipped'])} files skipped{Style.RESET_ALL}"

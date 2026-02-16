@@ -605,7 +605,13 @@ class FileManager:
     ) -> Dict[str, List[str]]:
         """ファイルをバックアップ"""
         backup_dir = self.get_backup_dir(machine_name)
-        results = {"copied": [], "skipped": [], "unchanged": [], "errors": []}
+        results = {
+            "copied": [],
+            "skipped": [],
+            "unchanged": [],
+            "errors": [],
+            "cleaned": [],
+        }
 
         print(
             f"Starting backup for machine: {Fore.CYAN}{machine_name}{Style.RESET_ALL}"
@@ -662,6 +668,24 @@ class FileManager:
                 )
                 if will_encrypt:
                     dest_file = dest_file.with_suffix(dest_file.suffix + ".enc")
+
+                # Stale counterpart cleanup (encryption status changed)
+                if will_encrypt:
+                    stale_file = dest_file.parent / dest_file.name.removesuffix(".enc")
+                else:
+                    stale_file = dest_file.parent / (dest_file.name + ".enc")
+
+                if stale_file.exists():
+                    stale_relative = stale_file.relative_to(backup_dir)
+                    stale_kind = "plaintext" if will_encrypt else "encrypted"
+                    if not dry_run:
+                        stale_file.unlink()
+                        print(f"  Cleanup: removed stale {stale_kind} {stale_relative}")
+                    else:
+                        print(
+                            f"  Cleanup: would remove stale {stale_kind} {stale_relative}"
+                        )
+                    results["cleaned"].append(str(stale_relative))
 
                 # 既存ファイルとの比較
                 comparison_result = self.file_comparison_manager.are_files_identical(
