@@ -1463,7 +1463,12 @@ class FileManager:
     def cleanup_repository_files(
         self, machine_name: str, dry_run: bool = False
     ) -> Dict[str, List[str]]:
-        """リポジトリから孤立ファイルを削除（ローカルに存在しないファイル）
+        """リポジトリから孤立ファイルと暗号化ステータス変更による重複ファイルを削除
+
+        検出対象:
+        1. 孤立ファイル: ローカルに存在しないファイル
+        2. Staleファイル: 暗号化ステータス変更で不要になった旧形式ファイル
+           (例: .envと.env.encの両方がリポジトリに存在する場合)
 
         Args:
             machine_name: 対象のマシン名
@@ -1507,6 +1512,8 @@ class FileManager:
 
         # リポジトリ内のファイルを確認
         orphaned_files = []
+        stale_files = []
+        stale_checked = set()  # 重複検知済みペアを記録
 
         # パフォーマンス最適化: targetのマッピングを事前に構築
         target_mappings = self._build_target_mappings()
@@ -1540,8 +1547,18 @@ class FileManager:
                     f"  Orphaned: {relative_path}{encrypted_info} (local: {actual_local_path})"
                 )
             else:
-                # デバッグ用: 存在するファイルも表示（dry-runでのみ）
-                if dry_run:
+                # Stale counterpart検知: 暗号化ステータス変更による重複
+                stale_counterpart = self._detect_stale_counterpart(
+                    repo_file,
+                    relative_path,
+                    actual_local_path,
+                    backup_dir,
+                    stale_checked,
+                )
+                if stale_counterpart:
+                    stale_file, stale_relative, reason = stale_counterpart
+                    stale_files.append((stale_file, stale_relative, reason))
+                elif dry_run:
                     encrypted_info = (
                         " [encrypted]" if repo_file.suffix == ".enc" else ""
                     )
@@ -1549,30 +1566,44 @@ class FileManager:
                         f"Exists: {relative_path}{encrypted_info} (local: {actual_local_path})"
                     )
 
-        if not orphaned_files:
-            print(f"{Fore.GREEN}No orphaned files found in repository{Style.RESET_ALL}")
+        # 結果を統合して表示
+        files_to_delete = []
+
+        if orphaned_files:
+            print(
+                f"\n{Fore.YELLOW}Found {len(orphaned_files)} orphaned file(s){Style.RESET_ALL}"
+            )
+            files_to_delete.extend((f, rp, "orphaned") for f, rp, _ in orphaned_files)
+
+        if stale_files:
+            print(
+                f"\n{Fore.YELLOW}Found {len(stale_files)} stale file(s) "
+                f"(encryption status changed){Style.RESET_ALL}"
+            )
+            files_to_delete.extend((f, rp, reason) for f, rp, reason in stale_files)
+
+        if not files_to_delete:
+            print(
+                f"{Fore.GREEN}No orphaned or stale files found in repository{Style.RESET_ALL}"
+            )
             print(
                 f"Scanned {sum(1 for _ in backup_dir.rglob('*') if _.is_file())} files in total"
             )
             return results
 
-        print(
-            f"\n{Fore.YELLOW}Found {len(orphaned_files)} orphaned file(s){Style.RESET_ALL}"
-        )
-
         if dry_run:
-            for repo_file, relative_path, local_path in orphaned_files:
+            for repo_file, relative_path, reason in files_to_delete:
                 results["would_delete"].append(str(relative_path))
             print(
-                f"{Fore.YELLOW}DRY RUN: Would delete {len(orphaned_files)} files{Style.RESET_ALL}"
+                f"{Fore.YELLOW}DRY RUN: Would delete {len(files_to_delete)} files{Style.RESET_ALL}"
             )
             return results
 
         # 実際の削除処理
-        for repo_file, relative_path, local_path in orphaned_files:
+        for repo_file, relative_path, reason in files_to_delete:
             try:
                 repo_file.unlink()
-                print(f"Deleted: {relative_path}")
+                print(f"Deleted: {relative_path} ({reason})")
                 results["deleted"].append(str(relative_path))
             except Exception as e:
                 error_msg = f"Error deleting {relative_path}: {e}"
@@ -1583,6 +1614,73 @@ class FileManager:
         self._cleanup_empty_directories(backup_dir)
 
         return results
+
+    def _detect_stale_counterpart(
+        self,
+        repo_file: Path,
+        relative_path: Path,
+        actual_local_path: Path,
+        backup_dir: Path,
+        stale_checked: set,
+    ) -> Optional[tuple]:
+        """暗号化ステータス変更による stale counterpart を検知
+
+        リポジトリに .env と .env.enc の両方が存在する場合、
+        should_encrypt_file() の結果に基づいて不要な方を特定する。
+
+        Returns:
+            (stale_file, stale_relative_path, reason) or None
+        """
+        # counterpartのパスを計算
+        is_encrypted_file = repo_file.suffix == ".enc"
+        if is_encrypted_file:
+            counterpart = repo_file.parent / repo_file.name.removesuffix(".enc")
+        else:
+            counterpart = repo_file.parent / (repo_file.name + ".enc")
+
+        # counterpartがリポジトリに存在しなければ重複なし
+        if not counterpart.exists():
+            return None
+
+        # 正規化キーで重複チェック済みか確認（ペアを1回だけ処理）
+        pair_key = tuple(sorted([str(repo_file), str(counterpart)]))
+        if pair_key in stale_checked:
+            return None
+        stale_checked.add(pair_key)
+
+        # should_encrypt_file でどちらが正しいか判定
+        target = self.config_manager._find_deepest_ancestor_target(
+            str(actual_local_path)
+        )
+        if target is None:
+            return None
+
+        expanded_target_path = self.config_manager.expand_path(target.path)
+        try:
+            target_relative = actual_local_path.relative_to(expanded_target_path)
+        except ValueError:
+            return None
+
+        should_encrypt = self.config_manager.should_encrypt_file(
+            actual_local_path, target, target_relative
+        )
+
+        # stale側を特定（現在のファイルかcounterpartか、走査順に依存しない）
+        if should_encrypt:
+            # 暗号化すべき → 平文版がstale
+            stale_file = counterpart if is_encrypted_file else repo_file
+        else:
+            # 平文でよい → 暗号化版がstale
+            stale_file = repo_file if is_encrypted_file else counterpart
+
+        stale_relative = stale_file.relative_to(backup_dir)
+        stale_kind = "plaintext" if should_encrypt else "encrypted"
+        correct_kind = "encrypted" if should_encrypt else "plaintext"
+        print(
+            f"  Stale: {stale_relative} (should be {correct_kind}, "
+            f"stale {stale_kind} removed)"
+        )
+        return (stale_file, stale_relative, f"stale {stale_kind}")
 
     def _construct_local_path(self, relative_path: Path, backup_dir: Path) -> Path:
         """リポジトリの相対パスから対応するローカルパスを構築
