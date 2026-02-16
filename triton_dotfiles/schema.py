@@ -265,17 +265,29 @@ CONFIG_SCHEMA: dict[str, Any] = {
             ],
         },
         "target ensure": {
-            "description": "Ensure a file is backed up. Idempotent: if already backed up, "
-            "does nothing. Otherwise adds the file to the most specific existing target, "
-            "or creates a new target.",
+            "description": "Ensure a target exists with specified files. Idempotent: "
+            "if target and files already exist, does nothing. "
+            "If target exists but files are missing, adds them. "
+            "If target does not exist, creates it.",
             "arguments": {
-                "file_path": {
+                "target_path": {
                     "required": True,
                     "type": "string",
-                    "description": "File path to ensure is backed up (files only, not directories)",
+                    "description": "Target directory path (same as target add)",
                 }
             },
             "options": {
+                "--files": {
+                    "short": "-f",
+                    "type": "string",
+                    "required": True,
+                    "description": "Comma-separated list of file patterns to ensure",
+                    "examples": [
+                        "CLAUDE.md",
+                        "CLAUDE.md,AGENTS.md",
+                        "settings/mine.json,app/.env",
+                    ],
+                },
                 "--json": {
                     "type": "flag",
                     "description": "Output as JSON for programmatic parsing",
@@ -286,27 +298,26 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 },
             },
             "examples": [
-                "triton config target ensure ~/.claude/CLAUDE.md --json",
-                "triton config target ensure ~/.ssh/config",
+                "triton config target ensure ~/.claude --files 'CLAUDE.md' --json",
+                "triton config target ensure ~/.config/foo --files 'settings.json,app.yml' --json",
             ],
             "idempotent": True,
-            "idempotent_behavior": "Returns action='none' if file is already backed up",
+            "idempotent_behavior": "Returns action='none' if target exists and all files are already covered",
             "returns": {
                 "success": "Whether operation succeeded",
-                "action": "One of: 'none', 'added_to_existing', 'created_target'",
-                "backed_up": "Always true on success",
-                "file": "Filename that was ensured",
-                "target": "Target path that covers the file",
-                "matched_pattern": "Pattern that matches the file (for action='none')",
+                "action": "One of: 'none', 'added_files', 'created_target'",
+                "target": "Normalized target path",
+                "files": "Requested file list",
+                "added_files": "Files that were actually added (for action='added_files')",
                 "backup_path": "Path to config backup (if config was modified)",
             },
             "constraints": [
-                "Only accepts file paths, not directories",
-                "Adds to the deepest (most specific) matching target to prevent duplicates",
+                "--files is required",
+                "Parallel to 'target add' but idempotent",
             ],
             "side_effects": [
-                "May modify an existing target's files list",
                 "May create a new target",
+                "May add files to an existing target",
                 "Creates config backup when changes are made (unless --no-backup)",
             ],
         },

@@ -560,9 +560,9 @@ class FileList(Vertical):
                     item = FileListItem(file_info, original_index, is_selected)
                     self.list_view.append(item)
                     self.call_after_refresh(
-                        lambda i=item: i.update_display()
-                        if hasattr(i, "update_display")
-                        else None
+                        lambda i=item: (
+                            i.update_display() if hasattr(i, "update_display") else None
+                        )
                     )
 
                 # グループ末尾に空白行を追加
@@ -578,9 +578,9 @@ class FileList(Vertical):
                 self.list_view.append(item)
                 # アイテムがマウントされた後に表示を更新
                 self.call_after_refresh(
-                    lambda i=item: i.update_display()
-                    if hasattr(i, "update_display")
-                    else None
+                    lambda i=item: (
+                        i.update_display() if hasattr(i, "update_display") else None
+                    )
                 )
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:

@@ -17,7 +17,7 @@ Manage backup targets, startup hooks, exclude/encrypt patterns, and settings in 
 | List targets | `triton config target list --json` |
 | List by path | `triton config target list --path <path> --json` |
 | Check coverage | `triton config target check <path> --json` |
-| Ensure backed up | `triton config target ensure <file> --json` |
+| Ensure backed up | `triton config target ensure <path> --files 'f1,f2' --json` |
 | Add recursive | `triton config target add <path> --recursive` |
 | Add specific files | `triton config target add <path> --files 'file1,file2'` |
 | Modify: add files | `triton config target modify <path> --add-files 'file1,file2'` |
@@ -63,24 +63,29 @@ Manage backup targets, startup hooks, exclude/encrypt patterns, and settings in 
 
 For full command schema, run `triton config --schema`.
 
-## Workflow: Ensure File Backup (Recommended)
+## Workflow: Ensure Target Files (Recommended)
 
-The simplest way to ensure a file is backed up. Idempotent and handles all logic automatically.
+The simplest way to ensure files are backed up under a specific target. Idempotent and handles all logic automatically. Parallel to `target add` but safe to run repeatedly.
 
 ```bash
-# Single command - checks, creates/modifies targets as needed
-triton config target ensure ~/.claude/CLAUDE.md --json
+# Ensure target with specific files
+triton config target ensure ~/.claude --files 'CLAUDE.md' --json
+
+# Multiple files
+triton config target ensure ~/.config/foo --files 'settings.json,app.yml' --json
+
+# Files with subdirectory paths
+triton config target ensure ~/project --files 'src/resources/app.yml,.env' --json
 ```
 
 **Behavior:**
-- If already backed up: returns `action: "none"` (no changes)
-- If parent target exists: adds file to that target (`action: "added_to_existing"`)
-- If no target exists: creates new target for parent directory (`action: "created_target"`)
-- Picks the **deepest (most specific) target** to prevent duplicates with nested targets
+- If target exists AND all files covered: returns `action: "none"` (no changes)
+- If target exists BUT some files missing: adds missing files (`action: "added_files"`)
+- If target does NOT exist: creates new target with files (`action: "created_target"`)
 
 **JSON response:**
 ```json
-{"success": true, "action": "none", "backed_up": true, "file": "CLAUDE.md", "target": "~/.claude", "matched_pattern": "CLAUDE.md"}
+{"success": true, "action": "none", "target": "~/.claude", "files": ["CLAUDE.md"], "added_files": null}
 ```
 
 ## Workflow: Check Backup Coverage
@@ -254,10 +259,13 @@ triton config settings unset tui.theme
 
 ## Common Patterns
 
-### Ensure a Single File is Backed Up
+### Ensure Files are Backed Up
 ```bash
 # Simplest approach - handles everything automatically
-triton config target ensure ~/.claude/CLAUDE.md --json
+triton config target ensure ~/.claude --files 'CLAUDE.md' --json
+
+# Multiple files in one command
+triton config target ensure ~/project --files 'CLAUDE.md,AGENTS.md,.env' --json
 ```
 
 ### Current Directory with Specific Files
@@ -299,7 +307,7 @@ triton config exclude add '*.tmp'
 - Required settings (e.g., `repository.path`) cannot be unset
 - `target modify`: Cannot use `--recursive` and `--no-recursive` together
 - `target modify`: Disabling recursive requires at least one file pattern to remain
-- `target ensure`: Only accepts file paths, not directories
+- `target ensure`: Requires `--files` option; parallel to `target add` but idempotent
 
 ## Backup Behavior
 

@@ -1,4 +1,4 @@
-"""Tests for target ensure command (ensure_file_backed_up)."""
+"""Tests for target ensure command (ensure_target_files)."""
 
 from pathlib import Path
 
@@ -7,8 +7,8 @@ import yaml
 from triton_dotfiles.config import ConfigManager
 
 
-class TestEnsureFileBackedUp:
-    """Tests for ensure_file_backed_up() method."""
+class TestEnsureTargetFiles:
+    """Tests for ensure_target_files() method."""
 
     def get_minimal_config(self, targets: list, tmp_path: Path) -> dict:
         return {
@@ -28,31 +28,30 @@ class TestEnsureFileBackedUp:
         manager.load_config()
         return manager, str(config_path)
 
-    def test_already_backed_up_returns_action_none(self, tmp_path):
-        """File already backed up returns action='none'."""
+    def test_target_exists_all_files_covered_returns_none(self, tmp_path):
+        """Existing target with all files already covered returns action='none'."""
         target_dir = tmp_path / "target"
         target_dir.mkdir()
-        test_file = target_dir / "CLAUDE.md"
-        test_file.touch()
+        (target_dir / "CLAUDE.md").touch()
 
         config = self.get_minimal_config(
-            [{"path": str(target_dir), "recursive": True, "files": ["CLAUDE.md"]}],
+            [{"path": str(target_dir), "files": ["CLAUDE.md", "AGENTS.md"]}],
             tmp_path,
         )
         manager, _ = self.create_config_manager(config, tmp_path)
 
-        result = manager.ensure_file_backed_up(str(test_file), backup=False)
+        result = manager.ensure_target_files(
+            str(target_dir), ["CLAUDE.md", "AGENTS.md"], backup=False
+        )
         assert result["success"] is True
         assert result["action"] == "none"
-        assert result["backed_up"] is True
-        assert result["matched_pattern"] == "CLAUDE.md"
+        assert result["target"] == str(target_dir)
+        assert result["added_files"] is None
 
-    def test_add_to_existing_target(self, tmp_path):
-        """File under existing target but not matched adds to target."""
+    def test_target_exists_some_files_missing_adds_files(self, tmp_path):
+        """Existing target missing some files adds them."""
         target_dir = tmp_path / "target"
         target_dir.mkdir()
-        test_file = target_dir / "new_file.md"
-        test_file.touch()
 
         config = self.get_minimal_config(
             [{"path": str(target_dir), "files": ["existing.md"]}],
@@ -60,26 +59,26 @@ class TestEnsureFileBackedUp:
         )
         manager, _ = self.create_config_manager(config, tmp_path)
 
-        result = manager.ensure_file_backed_up(str(test_file), backup=False)
+        result = manager.ensure_target_files(
+            str(target_dir), ["existing.md", "new_file.md"], backup=False
+        )
         assert result["success"] is True
-        assert result["action"] == "added_to_existing"
-        assert result["backed_up"] is True
-        assert result["target"] == str(target_dir)
+        assert result["action"] == "added_files"
+        assert result["added_files"] == ["new_file.md"]
 
         # Verify file was actually added
         manager._config = None
         manager.load_config()
         target = manager.config.targets[0]
         assert "new_file.md" in target.files
+        assert "existing.md" in target.files
 
-    def test_create_new_target(self, tmp_path):
-        """File with no matching target creates new target."""
+    def test_target_not_exists_creates_target(self, tmp_path):
+        """Non-existent target creates a new target with files."""
         other_dir = tmp_path / "other"
         other_dir.mkdir()
         new_dir = tmp_path / "newdir"
         new_dir.mkdir()
-        test_file = new_dir / "config.yml"
-        test_file.touch()
 
         config = self.get_minimal_config(
             [{"path": str(other_dir), "recursive": True}],
@@ -87,121 +86,133 @@ class TestEnsureFileBackedUp:
         )
         manager, _ = self.create_config_manager(config, tmp_path)
 
-        result = manager.ensure_file_backed_up(str(test_file), backup=False)
+        result = manager.ensure_target_files(
+            str(new_dir), ["config.yml", ".env"], backup=False
+        )
         assert result["success"] is True
         assert result["action"] == "created_target"
-        assert result["backed_up"] is True
-        assert result["file"] == "config.yml"
+        assert result["files"] == ["config.yml", ".env"]
 
-        # Verify target was created
+        # Verify target was created with correct files
         manager._config = None
         manager.load_config()
         assert len(manager.config.targets) == 2
-
-    def test_directory_rejected(self, tmp_path):
-        """Passing a directory returns error."""
-        target_dir = tmp_path / "target"
-        target_dir.mkdir()
-
-        config = self.get_minimal_config([], tmp_path)
-        manager, _ = self.create_config_manager(config, tmp_path)
-
-        result = manager.ensure_file_backed_up(str(target_dir), backup=False)
-        assert result["success"] is False
-        assert result["action"] == "error"
+        new_target = manager.config.targets[1]
+        assert "config.yml" in new_target.files
+        assert ".env" in new_target.files
 
     def test_idempotent_second_call_is_noop(self, tmp_path):
         """Running ensure twice: second call returns action='none'."""
         new_dir = tmp_path / "newdir"
         new_dir.mkdir()
-        test_file = new_dir / "file.txt"
-        test_file.touch()
 
         config = self.get_minimal_config([], tmp_path)
         manager, _ = self.create_config_manager(config, tmp_path)
 
         # First call: creates target
-        result1 = manager.ensure_file_backed_up(str(test_file), backup=False)
+        result1 = manager.ensure_target_files(
+            str(new_dir), ["file.txt"], backup=False
+        )
         assert result1["action"] == "created_target"
 
         # Second call: should be noop
-        result2 = manager.ensure_file_backed_up(str(test_file), backup=False)
+        result2 = manager.ensure_target_files(
+            str(new_dir), ["file.txt"], backup=False
+        )
         assert result2["success"] is True
         assert result2["action"] == "none"
-        assert result2["backed_up"] is True
 
-    def test_deepest_target_preferred(self, tmp_path):
-        """With nested targets, file is added to the deepest one."""
-        parent_dir = tmp_path / "parent"
-        parent_dir.mkdir()
-        child_dir = parent_dir / "child"
-        child_dir.mkdir()
-        test_file = child_dir / "new.txt"
-        test_file.touch()
-
-        config = self.get_minimal_config(
-            [
-                {"path": str(parent_dir), "files": ["README.md"]},
-                {"path": str(child_dir), "files": ["existing.txt"]},
-            ],
-            tmp_path,
-        )
-        manager, _ = self.create_config_manager(config, tmp_path)
-
-        result = manager.ensure_file_backed_up(str(test_file), backup=False)
-        assert result["success"] is True
-        assert result["action"] == "added_to_existing"
-        assert result["target"] == str(child_dir)
-
-        # Verify file was added to child, not parent
-        manager._config = None
-        manager.load_config()
-        child_target = None
-        parent_target = None
-        for t in manager.config.targets:
-            if t.path == str(child_dir):
-                child_target = t
-            elif t.path == str(parent_dir):
-                parent_target = t
-        assert "new.txt" in child_target.files
-        assert "new.txt" not in parent_target.files
-
-    def test_nonexistent_file_still_adds(self, tmp_path):
-        """Non-existent file is still added (for future files)."""
+    def test_multiple_files_partial_coverage(self, tmp_path):
+        """With 3 files requested, 2 covered, 1 missing: adds only the missing one."""
         target_dir = tmp_path / "target"
         target_dir.mkdir()
 
         config = self.get_minimal_config(
-            [{"path": str(target_dir), "files": ["existing.md"]}],
+            [{"path": str(target_dir), "files": ["a.md", "b.md"]}],
             tmp_path,
         )
         manager, _ = self.create_config_manager(config, tmp_path)
 
-        # File doesn't exist but target dir does
-        nonexistent = target_dir / "future.md"
-        result = manager.ensure_file_backed_up(str(nonexistent), backup=False)
+        result = manager.ensure_target_files(
+            str(target_dir), ["a.md", "b.md", "c.md"], backup=False
+        )
         assert result["success"] is True
-        assert result["action"] == "added_to_existing"
+        assert result["action"] == "added_files"
+        assert result["added_files"] == ["c.md"]
 
-    def test_recursive_target_with_pattern_not_matching(self, tmp_path):
-        """File under recursive target with non-matching pattern gets added."""
+    def test_files_with_subdirectory_paths(self, tmp_path):
+        """Files with subdirectory paths (e.g., settings/mine.json) work correctly."""
         target_dir = tmp_path / "target"
         target_dir.mkdir()
-        test_file = target_dir / "new.txt"
-        test_file.touch()
 
-        config = self.get_minimal_config(
-            [{"path": str(target_dir), "recursive": True, "files": ["*.yml"]}],
-            tmp_path,
-        )
+        config = self.get_minimal_config([], tmp_path)
         manager, _ = self.create_config_manager(config, tmp_path)
 
-        result = manager.ensure_file_backed_up(str(test_file), backup=False)
+        result = manager.ensure_target_files(
+            str(target_dir),
+            ["settings/backup/mine.json", "src/resources/app.yml"],
+            backup=False,
+        )
         assert result["success"] is True
-        assert result["action"] == "added_to_existing"
+        assert result["action"] == "created_target"
 
-        # Verify pattern was added
+        # Verify files in config
         manager._config = None
         manager.load_config()
         target = manager.config.targets[0]
-        assert "new.txt" in target.files
+        assert "settings/backup/mine.json" in target.files
+        assert "src/resources/app.yml" in target.files
+
+    def test_add_files_preserves_existing(self, tmp_path):
+        """Adding files to existing target preserves the original files."""
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        config = self.get_minimal_config(
+            [{"path": str(target_dir), "files": ["original.md", "keep.txt"]}],
+            tmp_path,
+        )
+        manager, _ = self.create_config_manager(config, tmp_path)
+
+        result = manager.ensure_target_files(
+            str(target_dir), ["new.md"], backup=False
+        )
+        assert result["success"] is True
+        assert result["action"] == "added_files"
+
+        # Verify all files present
+        manager._config = None
+        manager.load_config()
+        target = manager.config.targets[0]
+        assert "original.md" in target.files
+        assert "keep.txt" in target.files
+        assert "new.md" in target.files
+
+    def test_empty_files_returns_error(self, tmp_path):
+        """Empty files list returns error."""
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        config = self.get_minimal_config([], tmp_path)
+        manager, _ = self.create_config_manager(config, tmp_path)
+
+        result = manager.ensure_target_files(str(target_dir), [], backup=False)
+        assert result["success"] is False
+        assert result["action"] == "error"
+
+    def test_recursive_target_wildcard_covers_all(self, tmp_path):
+        """Recursive target with **/* pattern covers any file."""
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        config = self.get_minimal_config(
+            [{"path": str(target_dir), "recursive": True, "files": ["**/*"]}],
+            tmp_path,
+        )
+        manager, _ = self.create_config_manager(config, tmp_path)
+
+        result = manager.ensure_target_files(
+            str(target_dir), ["any_file.txt", "sub/dir/file.md"], backup=False
+        )
+        assert result["success"] is True
+        assert result["action"] == "none"
