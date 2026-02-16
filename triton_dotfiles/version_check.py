@@ -20,7 +20,7 @@ GITHUB_API_URL = "https://api.github.com/repos/asatamax/triton-dotfiles/releases
 
 # Cache settings
 CACHE_FILENAME = ".version_cache.json"
-CACHE_DURATION_HOURS = 6
+CACHE_DURATION_HOURS = 1
 
 
 class VersionCheckResult(NamedTuple):
