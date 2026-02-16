@@ -939,7 +939,7 @@ class ConfigManager:
     ) -> Optional[Target]:
         """Find the deepest (most specific) target that is an ancestor of the file path.
 
-        Used by ensure_file_backed_up() to determine the best target to add a file to,
+        Used to determine the best target that is an ancestor of the file path,
         preventing duplicate additions when nested targets exist.
 
         Args:
@@ -967,66 +967,68 @@ class ConfigManager:
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
 
-    def ensure_file_backed_up(self, file_path: str, backup: bool = True) -> dict:
-        """Ensure a file is backed up by creating or modifying targets as needed.
+    def ensure_target_files(
+        self, target_path: str, files: list[str], backup: bool = True
+    ) -> dict:
+        """Ensure a target exists with specified files. Idempotent.
 
-        Idempotent: if the file is already backed up, returns action='none'.
+        - If target exists and all files are already covered: action='none'
+        - If target exists but some files are missing: adds missing files
+        - If target does not exist: creates new target with files
 
         Args:
-            file_path: Path to the file to ensure is backed up
+            target_path: Target directory path (will be normalized)
+            files: List of file patterns to ensure
             backup: Whether to backup config.yml before modifying
 
         Returns:
-            Dict with success, action, backed_up, file, target, matched_pattern, backup_path
+            Dict with success, action, target, files, added_files, backup_path
         """
-        normalized = self.normalize_path(file_path)
-        expanded = Path(normalized).expanduser().resolve()
-
-        # Reject directories
-        if expanded.exists() and expanded.is_dir():
+        if not files:
             return {
                 "success": False,
                 "action": "error",
-                "message": "target ensure only accepts file paths, not directories",
-                "backed_up": False,
-                "file": expanded.name,
+                "message": "files list cannot be empty",
                 "target": None,
+                "files": [],
             }
 
-        # Check if already backed up
-        backed_up, matched_target, matched_pattern = self.is_path_backed_up(normalized)
-        if backed_up:
-            return {
-                "success": True,
-                "action": "none",
-                "backed_up": True,
-                "file": expanded.name,
-                "target": matched_target["path"] if matched_target else None,
-                "matched_pattern": matched_pattern,
-            }
+        normalized = self.normalize_path(target_path)
+        existing_target = self.find_target_by_path(normalized)
 
-        # Find the deepest ancestor target
-        deepest_target = self._find_deepest_ancestor_target(normalized)
+        if existing_target:
+            # Check which files are already covered
+            missing_files = []
+            for f in files:
+                # Build full path for matching: target_path + file
+                full_path = self.normalize_path(str(Path(normalized).expanduser() / f))
+                matched, _ = self._match_file_against_target(full_path, existing_target)
+                if not matched:
+                    missing_files.append(f)
 
-        if deepest_target:
-            # Add file to existing target
-            target_resolved = Path(deepest_target.path).expanduser().resolve()
-            relative = expanded.relative_to(target_resolved)
-            relative_str = str(relative)
+            if not missing_files:
+                return {
+                    "success": True,
+                    "action": "none",
+                    "target": normalized,
+                    "files": files,
+                    "added_files": None,
+                }
 
+            # Add missing files to existing target
             result = self.modify_target(
-                deepest_target.path,
-                add_files=[relative_str],
+                normalized,
+                add_files=missing_files,
                 backup=backup,
             )
 
             if result["success"]:
                 return {
                     "success": True,
-                    "action": "added_to_existing",
-                    "backed_up": True,
-                    "file": expanded.name,
-                    "target": deepest_target.path,
+                    "action": "added_files",
+                    "target": normalized,
+                    "files": files,
+                    "added_files": missing_files,
                     "backup_path": str(result["backup_path"])
                     if result.get("backup_path")
                     else None,
@@ -1036,18 +1038,14 @@ class ConfigManager:
                     "success": False,
                     "action": "error",
                     "message": result["message"],
-                    "backed_up": False,
-                    "file": expanded.name,
-                    "target": deepest_target.path,
+                    "target": normalized,
+                    "files": files,
                 }
         else:
-            # Create new target for the parent directory
-            parent_normalized = self.normalize_path(str(expanded.parent))
-            filename = expanded.name
-
+            # Create new target
             result = self.add_target(
-                parent_normalized,
-                files=[filename],
+                target_path,
+                files=files,
                 backup=backup,
             )
 
@@ -1055,9 +1053,9 @@ class ConfigManager:
                 return {
                     "success": True,
                     "action": "created_target",
-                    "backed_up": True,
-                    "file": filename,
-                    "target": parent_normalized,
+                    "target": normalized,
+                    "files": files,
+                    "added_files": None,
                     "backup_path": str(result["backup_path"])
                     if result.get("backup_path")
                     else None,
@@ -1067,9 +1065,8 @@ class ConfigManager:
                     "success": False,
                     "action": "error",
                     "message": result["message"],
-                    "backed_up": False,
-                    "file": filename,
-                    "target": parent_normalized,
+                    "target": normalized,
+                    "files": files,
                 }
 
     def would_cover_existing_targets(

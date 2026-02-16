@@ -2259,23 +2259,34 @@ def target_check(ctx, path, as_json):
 
 
 @config_target.command("ensure")
-@click.argument("file_path")
+@click.argument("target_path")
+@click.option(
+    "--files",
+    "-f",
+    required=True,
+    help="Comma-separated list of file patterns to ensure",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--no-backup", is_flag=True, help="Don't backup config before modifying")
 @click.pass_context
-def target_ensure(ctx, file_path, as_json, no_backup):
-    """Ensure a file is backed up. Creates or modifies targets as needed.
+def target_ensure(ctx, target_path, files, as_json, no_backup):
+    """Ensure a target exists with specified files. Idempotent.
 
-    Idempotent: if the file is already backed up, does nothing.
-    Adds to the deepest matching target to prevent duplicates.
+    Parallel to 'target add' but idempotent:
+    - If target exists and all files covered: no change
+    - If target exists but files missing: adds missing files
+    - If target does not exist: creates new target with files
 
     Examples:
-        triton config target ensure ~/.claude/CLAUDE.md
-        triton config target ensure ~/.ssh/config --json
+        triton config target ensure ~/.claude --files 'CLAUDE.md'
+        triton config target ensure ~/.config/foo --files 'settings.json,app.yml' --json
     """
     try:
         config_manager = ConfigManager(ctx.obj["config_path"])
-        result = config_manager.ensure_file_backed_up(file_path, backup=not no_backup)
+        file_list = [f.strip() for f in files.split(",")]
+        result = config_manager.ensure_target_files(
+            target_path, file_list, backup=not no_backup
+        )
 
         if as_json:
             import json
@@ -2292,23 +2303,22 @@ def target_ensure(ctx, file_path, as_json, no_backup):
 
             action = result["action"]
             target = result.get("target", "?")
-            filename = result.get("file", "?")
+            files_str = ", ".join(file_list)
 
             if action == "none":
-                pattern = result.get("matched_pattern", "")
-                parts = [f"target: {target}"]
-                if pattern:
-                    parts.append(f"pattern: {pattern}")
                 click.echo(
-                    f"{Fore.GREEN}✓ Already backed up ({', '.join(parts)}){Style.RESET_ALL}"
+                    f"{Fore.GREEN}✓ Already ensured (target: {target}, files: {files_str}){Style.RESET_ALL}"
                 )
-            elif action == "added_to_existing":
-                click.echo(f"{Fore.GREEN}✓ Added to target {target}{Style.RESET_ALL}")
+            elif action == "added_files":
+                added = ", ".join(result.get("added_files", []))
+                click.echo(
+                    f"{Fore.GREEN}✓ Added files to target {target}: {added}{Style.RESET_ALL}"
+                )
                 if result.get("backup_path"):
                     click.echo(f"   Config backed up to: {result['backup_path']}")
             elif action == "created_target":
                 click.echo(
-                    f"{Fore.GREEN}✓ Created new target {target} with file {filename}{Style.RESET_ALL}"
+                    f"{Fore.GREEN}✓ Created target {target} with files: {files_str}{Style.RESET_ALL}"
                 )
                 if result.get("backup_path"):
                     click.echo(f"   Config backed up to: {result['backup_path']}")
