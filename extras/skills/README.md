@@ -8,10 +8,10 @@ Copy or symlink the skill directory to `~/.claude/skills/`:
 
 ```bash
 # Option 1: Symlink (recommended for development)
-ln -s /path/to/triton-dotfiles/skills/claude-code/triton-config ~/.claude/skills/triton-config
+ln -s /path/to/triton-dotfiles/extras/skills/triton-config ~/.claude/skills/triton-config
 
 # Option 2: Copy
-cp -r /path/to/triton-dotfiles/skills/claude-code/triton-config ~/.claude/skills/
+cp -r /path/to/triton-dotfiles/extras/skills/triton-config ~/.claude/skills/
 ```
 
 ## Available Skills
