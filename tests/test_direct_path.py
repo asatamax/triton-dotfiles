@@ -7,7 +7,6 @@ efficient file collection by avoiding full directory scans when relative
 paths are specified.
 """
 
-
 from triton_dotfiles.utils import is_direct_path, separate_direct_and_pattern_files
 
 

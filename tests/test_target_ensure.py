@@ -110,15 +110,11 @@ class TestEnsureTargetFiles:
         manager, _ = self.create_config_manager(config, tmp_path)
 
         # First call: creates target
-        result1 = manager.ensure_target_files(
-            str(new_dir), ["file.txt"], backup=False
-        )
+        result1 = manager.ensure_target_files(str(new_dir), ["file.txt"], backup=False)
         assert result1["action"] == "created_target"
 
         # Second call: should be noop
-        result2 = manager.ensure_target_files(
-            str(new_dir), ["file.txt"], backup=False
-        )
+        result2 = manager.ensure_target_files(str(new_dir), ["file.txt"], backup=False)
         assert result2["success"] is True
         assert result2["action"] == "none"
 
@@ -174,9 +170,7 @@ class TestEnsureTargetFiles:
         )
         manager, _ = self.create_config_manager(config, tmp_path)
 
-        result = manager.ensure_target_files(
-            str(target_dir), ["new.md"], backup=False
-        )
+        result = manager.ensure_target_files(str(target_dir), ["new.md"], backup=False)
         assert result["success"] is True
         assert result["action"] == "added_files"
 
