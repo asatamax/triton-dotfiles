@@ -73,7 +73,7 @@ class FileComparisonManager:
             encryption_manager: Encryption manager (for encrypted file comparison).
         """
         self.encryption_manager = encryption_manager
-        self._hash_cache: Dict[str, str] = {}  # パス -> ハッシュのキャッシュ
+        self._hash_cache: Dict[Tuple[str, int, int], str] = {}
         self._inode_cache: Set[Tuple[int, int]] = set()  # inode情報のキャッシュ
         self._path_cache: Set[str] = set()  # 正規化パスのキャッシュ
 
@@ -224,12 +224,17 @@ class FileComparisonManager:
             )
 
     def _calculate_file_hash(self, file_path: Path) -> Optional[str]:
-        """Calculate SHA256 hash of a file (with caching)."""
-        file_path_str = str(file_path)
+        """Calculate SHA256 hash of a file with content-sensitive cache key."""
+        try:
+            file_stat = file_path.stat()
+        except Exception:
+            return None
+
+        cache_key = (str(file_path), file_stat.st_mtime_ns, file_stat.st_size)
 
         # キャッシュチェック
-        if file_path_str in self._hash_cache:
-            return self._hash_cache[file_path_str]
+        if cache_key in self._hash_cache:
+            return self._hash_cache[cache_key]
 
         try:
             hash_sha256 = hashlib.sha256()
@@ -238,7 +243,7 @@ class FileComparisonManager:
                     hash_sha256.update(chunk)
 
             file_hash = hash_sha256.hexdigest()
-            self._hash_cache[file_path_str] = file_hash
+            self._hash_cache[cache_key] = file_hash
             return file_hash
         except Exception:
             return None

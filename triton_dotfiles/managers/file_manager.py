@@ -604,6 +604,9 @@ class FileManager:
         self, machine_name: str, dry_run: bool = False
     ) -> Dict[str, List[str]]:
         """ファイルをバックアップ"""
+        # Restore後の誤判定を防ぐため、比較キャッシュを毎回リセットする
+        self.file_comparison_manager.clear_caches()
+
         backup_dir = self.get_backup_dir(machine_name)
         results = {
             "copied": [],
