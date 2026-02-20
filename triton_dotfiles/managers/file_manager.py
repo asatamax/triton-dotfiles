@@ -601,7 +601,7 @@ class FileManager:
         return None
 
     def backup_files(
-        self, machine_name: str, dry_run: bool = False
+        self, machine_name: str, dry_run: bool = False, verbose: bool = False
     ) -> Dict[str, List[str]]:
         """ファイルをバックアップ"""
         # Restore後の誤判定を防ぐため、比較キャッシュを毎回リセットする
@@ -632,8 +632,9 @@ class FileManager:
 
             # パターン情報の表示
             include_patterns, exclude_patterns = separate_patterns(target.files or [])
-            print(f"\nProcessing: {Fore.GREEN}{expanded_path}{Style.RESET_ALL}")
-            if dry_run and (include_patterns or exclude_patterns):
+            if verbose:
+                print(f"\nProcessing: {Fore.GREEN}{expanded_path}{Style.RESET_ALL}")
+            if verbose and dry_run and (include_patterns or exclude_patterns):
                 print(
                     f"   Patterns: {len(include_patterns)} inclusion, {len(exclude_patterns)} exclusion"
                 )
@@ -700,7 +701,8 @@ class FileManager:
                 files_identical = comparison_result.identical
 
                 if files_identical:
-                    print(f"Unchanged (skipped): {relative_path}")
+                    if verbose:
+                        print(f"Unchanged (skipped): {relative_path}")
                     results["unchanged"].append(str(relative_path))
                     continue
 
