@@ -274,8 +274,14 @@ def _launch_default_tui(skip_startup: bool = False):
 @cli.command()
 @click.option("--dry-run", "-n", is_flag=True, help="Dry run - show what would be done")
 @click.option("--machine", "-m", help="Override machine name")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output including unchanged files",
+)
 @click.pass_context
-def backup(ctx, dry_run, machine):
+def backup(ctx, dry_run, machine, verbose):
     """Backup current machine's configuration."""
     try:
         # Display config file in use
@@ -287,12 +293,17 @@ def backup(ctx, dry_run, machine):
 
         # Validate configuration
         if not ValidationDisplay.display_validation_results(
-            config_manager, show_success_message=False, ask_continue_on_error=True
+            config_manager,
+            show_success_message=False,
+            ask_continue_on_error=True,
+            verbose=verbose,
         ):
             return
 
         machine_name = machine or config_manager.get_machine_name()
-        results = file_manager.backup_files(machine_name, dry_run=dry_run)
+        results = file_manager.backup_files(
+            machine_name, dry_run=dry_run, verbose=verbose
+        )
 
         # Display results
         summary_parts = [
@@ -315,16 +326,8 @@ def backup(ctx, dry_run, machine):
                 click.echo(f"  - {error}")
 
         if not dry_run:
-            repo_path = file_manager.repo_root
-            click.echo(f"\n{Fore.CYAN}Next steps:{Style.RESET_ALL}")
-            click.echo(f"  pushd {repo_path}")
-            click.echo(f"  git add {machine_name}/")
-            click.echo(f'  git commit -m "backup({machine_name}): $(date +%Y-%m-%d)"')
-            click.echo("  git push")
-            click.echo("  popd")
-            click.echo(f"\n{Fore.YELLOW}Or as one-liner:{Style.RESET_ALL}")
             click.echo(
-                f'  (pushd {repo_path} && git add {machine_name}/ && git commit -m "backup({machine_name}): $(date +%Y-%m-%d)" && git push && popd)'
+                f"\nNext step: {Fore.CYAN}triton git-commit-push{Style.RESET_ALL}"
             )
 
     except Exception as e:

@@ -21,13 +21,21 @@ class ValidationDisplay:
     INFO_PREFIX = "i"
 
     @classmethod
-    def categorize_results(cls, results: List[str]) -> Tuple[List[str], List[str]]:
-        """Categorize validation results into warnings/info and errors."""
-        warnings_and_info = [
-            r for r in results if r.startswith((cls.WARNING_PREFIX, cls.INFO_PREFIX))
-        ]
+    def categorize_results(
+        cls, results: List[str]
+    ) -> Tuple[List[str], List[str], List[str]]:
+        """Categorize validation results into warnings, info, and errors.
+
+        Returns:
+            Tuple of (warnings, info, errors).
+            warnings: items starting with WARNING_PREFIX ('!')
+            info: items starting with INFO_PREFIX ('i')
+            errors: items starting with ERROR_PREFIX ('✗')
+        """
+        warnings = [r for r in results if r.startswith(cls.WARNING_PREFIX)]
+        info = [r for r in results if r.startswith(cls.INFO_PREFIX)]
         errors = [r for r in results if r.startswith(cls.ERROR_PREFIX)]
-        return warnings_and_info, errors
+        return warnings, info, errors
 
     @classmethod
     def display_validation_results(
@@ -35,6 +43,7 @@ class ValidationDisplay:
         config_manager: ConfigManager,
         show_success_message: bool = True,
         ask_continue_on_error: bool = False,
+        verbose: bool = False,
     ) -> bool:
         """
         Display validation results in a unified format.
@@ -43,6 +52,7 @@ class ValidationDisplay:
             config_manager: Configuration manager object.
             show_success_message: Show success message when no errors.
             ask_continue_on_error: Prompt user to continue when errors exist.
+            verbose: Show info-level messages (target mode descriptions, etc.).
 
         Returns:
             bool: Whether to proceed (no errors or user chose to continue).
@@ -50,13 +60,19 @@ class ValidationDisplay:
         validation_results = config_manager.validate_config()
         actual_errors = config_manager.get_validation_errors()
 
-        warnings_and_info, _ = cls.categorize_results(validation_results)
+        warnings, info, _ = cls.categorize_results(validation_results)
 
-        # 警告・情報の表示
-        if warnings_and_info:
+        # 警告の表示
+        if warnings:
             click.echo(f"{Fore.YELLOW}Warnings:{Style.RESET_ALL}")
-            for msg in warnings_and_info:
+            for msg in warnings:
                 click.echo(f"  {Fore.YELLOW}!{Style.RESET_ALL} {msg}")
+
+        # info表示（verbose時のみ）
+        if verbose and info:
+            click.echo(f"{Fore.CYAN}Info:{Style.RESET_ALL}")
+            for msg in info:
+                click.echo(f"  {Fore.CYAN}i{Style.RESET_ALL} {msg}")
 
         # エラーの表示
         if actual_errors:
@@ -80,17 +96,26 @@ class ValidationDisplay:
         config_manager: ConfigManager,
         additional_warnings: Optional[List[str]] = None,
     ):
-        """Display detailed validation results (for validate command)."""
+        """Display detailed validation results (for validate command).
+
+        Always shows all messages including info (used by validate --verbose).
+        """
         validation_results = config_manager.validate_config()
         actual_errors = config_manager.get_validation_errors()
 
-        warnings_and_info, _ = cls.categorize_results(validation_results)
+        warnings, info, _ = cls.categorize_results(validation_results)
 
-        # バリデーション結果を表示
-        if warnings_and_info:
+        # 警告の表示
+        if warnings:
             click.echo(f"\n{Fore.YELLOW}Warnings:{Style.RESET_ALL}")
-            for msg in warnings_and_info:
+            for msg in warnings:
                 click.echo(f"  {Fore.YELLOW}!{Style.RESET_ALL} {msg}")
+
+        # info表示
+        if info:
+            click.echo(f"\n{Fore.CYAN}Info:{Style.RESET_ALL}")
+            for msg in info:
+                click.echo(f"  {Fore.CYAN}i{Style.RESET_ALL} {msg}")
 
         # 実際のエラーのみを表示
         if actual_errors:
