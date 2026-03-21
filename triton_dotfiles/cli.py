@@ -11,7 +11,7 @@ from colorama import Fore, Style
 from .validation_display import ValidationDisplay
 
 from .utils import import_class_from_module, get_triton_dir
-from .__version__ import get_version_info
+from .__version__ import get_version
 
 ConfigManager = import_class_from_module("config", "ConfigManager")
 create_default_config = import_class_from_module("config", "create_default_config")
@@ -83,20 +83,9 @@ def cli(ctx, triton_dir, version, skip_startup):
 
     # Handle --version flag
     if version:
-        version_info = get_version_info()
         click.echo(
-            f"{Fore.CYAN}Triton Dotfiles {Fore.GREEN}{version_info['version']}{Style.RESET_ALL}"
+            f"{Fore.CYAN}Triton Dotfiles {Fore.GREEN}v{get_version()}{Style.RESET_ALL}"
         )
-
-        if version_info["source"] == "git":
-            click.echo(f"Version source: {Fore.GREEN}Git tag{Style.RESET_ALL}")
-        else:
-            click.echo(f"Version source: {Fore.YELLOW}Static fallback{Style.RESET_ALL}")
-
-        if version_info["git_version"]:
-            click.echo(f"Git version: {version_info['git_version']}")
-        if version_info["static_version"]:
-            click.echo(f"Static version: {version_info['static_version']}")
 
         # Check for updates
         try:
@@ -168,8 +157,7 @@ def cli(ctx, triton_dir, version, skip_startup):
 
 def _show_welcome_message():
     """Show friendly welcome message for first-time users."""
-    version_info = get_version_info()
-    version = version_info["version"]
+    version = get_version()
 
     click.echo()
     click.echo(f"  {Fore.CYAN}Welcome to Triton Dotfiles {version}{Style.RESET_ALL}")
