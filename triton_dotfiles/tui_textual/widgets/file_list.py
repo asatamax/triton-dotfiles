@@ -260,6 +260,7 @@ class FileList(Vertical):
     BINDINGS = [
         Binding("/", "focus_filter", "Filter"),
         Binding("-", "toggle_dividers", "Toggle Dividers"),
+        Binding(".", "toggle_changed_filter", "Changed Only"),
     ]
 
     DEFAULT_CSS = """
@@ -372,6 +373,7 @@ class FileList(Vertical):
         self.file_adapter = file_adapter
         self.filter_query: str = ""  # 現在のフィルタクエリ
         self.show_dividers: bool = False  # targetごとのdivider表示フラグ
+        self.show_changed_only: bool = False  # 変更ファイルのみ表示フラグ
         # フォーカス可能にする
         self.can_focus = True
 
@@ -417,10 +419,24 @@ class FileList(Vertical):
     def _update_header(self):
         """ヘッダー情報を更新"""
         total_files = len(self.files)
+        filtered_count = len(self.filtered_files)
         encrypted_count = sum(1 for f in self.files if f.get("encrypted", False))
         selected_count = len(self.selected_files)
-        divider_indicator = " [grouped]" if self.show_dividers else ""
-        header_text = f"Files ({total_files} total, {encrypted_count} encrypted, {selected_count} selected){divider_indicator}"
+
+        # フィルタ状態インジケータ
+        indicators = []
+        if self.show_dividers:
+            indicators.append("grouped")
+        if self.show_changed_only:
+            indicators.append("changed")
+        indicator_str = " [" + ", ".join(indicators) + "]" if indicators else ""
+
+        # フィルタ適用中はフィルタ後件数を表示
+        is_filtered = self.filter_query or self.show_changed_only
+        if is_filtered:
+            header_text = f"Files ({filtered_count}/{total_files} shown, {encrypted_count} encrypted, {selected_count} selected){indicator_str}"
+        else:
+            header_text = f"Files ({total_files} total, {encrypted_count} encrypted, {selected_count} selected){indicator_str}"
         self.query_one("#file-list-header", Label).update(header_text)
 
     def compose(self):
@@ -492,42 +508,46 @@ class FileList(Vertical):
             # 入力内容に応じて表示/非表示を更新
             self._update_filter_visibility()
 
+    @staticmethod
+    def _is_changed_file(file_info: dict) -> bool:
+        """ファイルが変更状態かどうかを判定"""
+        if file_info.get("changed", False):
+            return True
+        if file_info.get("local_only", False):
+            return True
+        if not file_info.get("local_exists", True):
+            return True
+        return False
+
     def _apply_filter(self) -> None:
-        """フィルタを適用してリストを更新"""
-        if not self.filter_query:
-            # フィルタが空の場合は全ファイルを表示
-            self.filtered_files = self.files.copy()
+        """フィルタを適用してリストを更新（変更フィルタ + ファジー検索）"""
+        # Step 1: 変更フィルタ適用
+        if self.show_changed_only:
+            base_files = [f for f in self.files if self._is_changed_file(f)]
         else:
-            # Matcherを使ってファジー検索
+            base_files = self.files.copy()
+
+        # Step 2: ファジー検索フィルタ適用
+        if not self.filter_query:
+            self.filtered_files = base_files
+        else:
             matcher = Matcher(self.filter_query)
             filtered = []
 
-            for file_info in self.files:
+            for file_info in base_files:
                 file_name = file_info.get("name", "")
                 score = matcher.match(file_name)
                 if score > 0:
-                    # スコアが0より大きいものだけを含める
                     filtered.append((score, file_info))
 
-            # スコアの高い順にソート
             filtered.sort(key=lambda x: x[0], reverse=True)
             self.filtered_files = [f[1] for f in filtered]
 
         # ListViewを更新
         self._update_list_view()
 
-        # フィルタ結果をヘッダーに反映
-        total_files = len(self.files)
-        filtered_count = len(self.filtered_files)
-        encrypted_count = sum(1 for f in self.files if f.get("encrypted", False))
-        selected_count = len(self.selected_files)
-
-        if self.filter_query:
-            header_text = f"Files ({filtered_count}/{total_files} shown, {encrypted_count} encrypted, {selected_count} selected)"
-        else:
-            header_text = f"Files ({total_files} total, {encrypted_count} encrypted, {selected_count} selected)"
-
-        self.query_one("#file-list-header", Label).update(header_text)
+        # ヘッダーを更新
+        self._update_header()
 
     def _update_list_view(self) -> None:
         """フィルタ結果に基づいてListViewを更新"""
@@ -694,8 +714,12 @@ class FileList(Vertical):
         """targetごとのdivider表示をトグル"""
         self.show_dividers = not self.show_dividers
         self._update_list_view()
-        # ヘッダーにdividerモードの状態を表示
         self._update_header()
+
+    def action_toggle_changed_filter(self) -> None:
+        """変更ファイルのみ表示をトグル"""
+        self.show_changed_only = not self.show_changed_only
+        self._apply_filter()
 
     def _update_filter_visibility(self) -> None:
         """フィルタ入力欄の表示/非表示を制御"""
