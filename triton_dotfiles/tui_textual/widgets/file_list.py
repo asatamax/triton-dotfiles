@@ -462,11 +462,6 @@ class FileList(Vertical):
         self.filter_query = ""
         self.filter_input.value = ""  # フィルタをクリア
 
-        # ヘッダーを更新
-        total_files = len(files)
-        encrypted_count = sum(1 for f in files if f.get("encrypted", False))
-        selected_count = len(self.selected_files)
-
         # マシン名ヘッダーを更新（現在のマシンかチェック）
         is_current_machine = False
         if self.file_adapter and machine_name != "No Machines":
@@ -493,12 +488,8 @@ class FileList(Vertical):
 
         self.query_one("#machine-header", Label).update(machine_text)
 
-        # ファイル一覧ヘッダーを更新
-        header_text = f"Files ({total_files} total, {encrypted_count} encrypted, {selected_count} selected)"
-        self.query_one("#file-list-header", Label).update(header_text)
-
-        # ListViewを更新
-        self._update_list_view()
+        # フィルタを再適用（show_changed_only等の状態を維持）
+        self._apply_filter()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """フィルタ入力が変更されたときの処理"""
