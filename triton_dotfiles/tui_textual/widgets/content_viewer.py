@@ -864,6 +864,50 @@ class ContentViewer(Vertical):
 
         return text
 
+    def get_copyable_text(self) -> tuple[str | None, str]:
+        """現在アクティブなタブのプレーンテキストを取得
+
+        Returns:
+            (テキスト or None, タブ名) のタプル。
+            Splitタブやコンテンツがない場合はNoneを返す。
+        """
+        try:
+            tabs = self.query_one("#main-tabs", TabbedContent)
+            active_tab = tabs.active
+        except Exception:
+            return None, ""
+
+        if active_tab == "split":
+            return None, "Split"
+
+        display_id_map = {
+            "preview": ("preview-display", "Preview"),
+            "local": ("local-display", "Local"),
+            "diff": ("diff-display", "Diff"),
+            "info": ("info-display", "Info"),
+        }
+
+        if active_tab not in display_id_map:
+            return None, ""
+
+        widget_id, tab_name = display_id_map[active_tab]
+        try:
+            widget = self.query_one(f"#{widget_id}", Static)
+            renderable = widget.renderable
+
+            # Rich renderable からプレーンテキストを抽出
+            if isinstance(renderable, str):
+                return renderable, tab_name
+            elif isinstance(renderable, Text):
+                return renderable.plain, tab_name
+            elif isinstance(renderable, Syntax):
+                return renderable.code, tab_name
+            else:
+                # その他のRich renderableはstr変換を試みる
+                return str(renderable), tab_name
+        except Exception:
+            return None, ""
+
     def add_future_tab(
         self, tab_id: str, title: str, initial_message: Optional[str] = None
     ) -> None:
