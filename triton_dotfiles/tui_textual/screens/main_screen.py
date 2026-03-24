@@ -619,6 +619,59 @@ class MainScreen(Static):
                 MessageDialog("Git Pull Error", f"Git pull failed: {str(e)}", "error")
             )
 
+    def copy_to_clipboard(self) -> None:
+        """現在アクティブなタブのコンテンツをクリップボードにコピー"""
+        text, tab_name = self.content_viewer.get_copyable_text()
+
+        if text is None:
+            if tab_name == "Split":
+                self.app.notify(
+                    "Copy not available in Split view. Use Preview or Local tab.",
+                    severity="warning",
+                )
+            else:
+                self.app.notify("No content to copy", severity="warning")
+            return
+
+        if not text.strip():
+            self.app.notify("Content is empty", severity="warning")
+            return
+
+        try:
+            import subprocess
+            import platform
+
+            if platform.system() == "Darwin":
+                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+            else:
+                # Linux: xclip or xsel
+                try:
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard"],
+                        input=text.encode("utf-8"),
+                        check=True,
+                    )
+                except FileNotFoundError:
+                    subprocess.run(
+                        ["xsel", "--clipboard", "--input"],
+                        input=text.encode("utf-8"),
+                        check=True,
+                    )
+
+            # 行数を数えてフィードバック
+            line_count = len(text.splitlines())
+            self.app.notify(
+                f"Copied {tab_name} content ({line_count} lines)",
+                severity="information",
+            )
+        except FileNotFoundError:
+            self.app.notify(
+                "Clipboard tool not found (pbcopy/xclip/xsel)",
+                severity="error",
+            )
+        except Exception as e:
+            self.app.notify(f"Copy failed: {str(e)}", severity="error")
+
     def show_in_finder(self):
         """現在のファイルをFinderで表示"""
         # 現在選択されているファイルを取得

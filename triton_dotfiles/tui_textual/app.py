@@ -72,6 +72,11 @@ class TritonCommandProvider(Provider):
                 self.app.action_open_vscode_edit,
                 "Edit local file directly in VSCode/Cursor/Windsurf",
             ),
+            (
+                "Copy to Clipboard",
+                self.app.action_copy_to_clipboard,
+                "Copy current tab content to clipboard",
+            ),
             ("Refresh", self.app.action_refresh, "Refresh the current view"),
             (
                 "Show Help",
@@ -149,6 +154,8 @@ class TritonTUIApp(App):
         Binding("m", "select_machine", "Select Machine"),
         # ファイル操作
         Binding("F", "show_in_finder", "Finder"),
+        # クリップボード
+        Binding("c", "copy_to_clipboard", "Copy"),
         # UI 操作
         Binding("t", "toggle_left_pane", "Toggle Pane"),
     ]
@@ -260,6 +267,9 @@ class TritonTUIApp(App):
         key_line("i", "File info view")
         key_line("s", "Split view (Local + Preview)")
         key_line("1-5", "Quick tab switching")
+
+        section("Clipboard")
+        key_line("c", "Copy current tab content to clipboard")
 
         section("External Editor")
         key_line("D", "VSCode Diff - Compare local vs database")
@@ -386,6 +396,11 @@ class TritonTUIApp(App):
         """Git commit pushを実行"""
         main_screen = self.query_one(MainScreen)
         self.run_worker(main_screen.git_commit_push_repository())
+
+    def action_copy_to_clipboard(self) -> None:
+        """現在のタブのコンテンツをクリップボードにコピー"""
+        main_screen = self.query_one(MainScreen)
+        main_screen.copy_to_clipboard()
 
     def action_cleanup_repository(self) -> None:
         """リポジトリクリーンアップを実行"""
