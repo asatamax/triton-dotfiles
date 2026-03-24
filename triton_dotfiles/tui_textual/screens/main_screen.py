@@ -78,13 +78,13 @@ class MainScreen(Static):
             # 設定ファイルが見つからない場合
             self.file_list.load_files("Error", [])
             self.content_viewer._show_error_in_tab(
-                "preview", f"Config file not found: {e}"
+                "backup", f"Config file not found: {e}"
             )
         except Exception as e:
             # その他のエラー
             self.file_list.load_files("Error", [])
             self.content_viewer._show_error_in_tab(
-                "preview", f"Failed to initialize: {e}"
+                "backup", f"Failed to initialize: {e}"
             )
 
     def _load_initial_data(self) -> None:
@@ -102,7 +102,7 @@ class MainScreen(Static):
                 "2. Create backup with [bold]triton backup[/bold]\n"
                 "3. Launch again with [bold]triton[/bold]"
             )
-            self.content_viewer.query_one("#preview-display").update(welcome_text)
+            self.content_viewer.query_one("#backup-display").update(welcome_text)
 
             return
 
@@ -171,7 +171,7 @@ class MainScreen(Static):
                 "Available features:\n"
                 "• File browsing\n"
                 "• Diff view (d)\n"
-                "• Preview (v)\n"
+                "• Backup view (b)\n"
                 "• File restore (r)\n"
                 "• File export (e)\n\n"
                 "Use arrow keys to navigate\n"
@@ -183,7 +183,7 @@ class MainScreen(Static):
                 f"No files found for machine '{self.current_machine['name']}'"
             )
 
-        self.content_viewer.query_one("#preview-display").update(welcome_text)
+        self.content_viewer.query_one("#backup-display").update(welcome_text)
 
         # 初期フォーカスをファイルリストのListViewに設定
         self.file_list.list_view.focus()
@@ -626,7 +626,7 @@ class MainScreen(Static):
         if text is None:
             if tab_name == "Split":
                 self.app.notify(
-                    "Copy not available in Split view. Use Preview or Local tab.",
+                    "Copy not available in Split view. Use Backup or Local tab.",
                     severity="warning",
                 )
             else:

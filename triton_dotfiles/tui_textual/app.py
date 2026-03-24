@@ -130,13 +130,13 @@ class TritonTUIApp(App):
         Binding("space", "toggle_selection", "Toggle"),
         Binding("enter", "select_file", "Select"),
         # 表示モード
-        Binding("p", "toggle_preview", "Prev"),
+        Binding("b", "toggle_backup", "Backup View"),
         Binding("l", "toggle_local", "Local"),
         Binding("d", "toggle_diff", "Diff"),
         Binding("i", "toggle_info", "Info"),
         Binding("s", "toggle_split", "Split"),
         # 数字キーでタブ切り替え（フッターには表示しない）
-        Binding("1", "toggle_preview", "Tab 1", show=False),
+        Binding("1", "toggle_backup", "Tab 1", show=False),
         Binding("2", "toggle_local", "Tab 2", show=False),
         Binding("3", "toggle_diff", "Tab 3", show=False),
         Binding("4", "toggle_info", "Tab 4", show=False),
@@ -261,11 +261,11 @@ class TritonTUIApp(App):
         key_line("/", "Filter files")
 
         section("View Modes")
-        key_line("p", "Preview view")
+        key_line("b", "Backup view")
         key_line("l", "Local file view")
         key_line("d", "Diff view")
         key_line("i", "File info view")
-        key_line("s", "Split view (Local + Preview)")
+        key_line("s", "Split view (Local + Backup)")
         key_line("1-5", "Quick tab switching")
 
         section("Clipboard")
@@ -307,10 +307,10 @@ class TritonTUIApp(App):
         main_screen = self.query_one(MainScreen)
         main_screen.set_view_mode("diff")
 
-    def action_toggle_preview(self) -> None:
-        """プレビューモードに切り替え"""
+    def action_toggle_backup(self) -> None:
+        """バックアップ表示モードに切り替え"""
         main_screen = self.query_one(MainScreen)
-        main_screen.set_view_mode("preview")
+        main_screen.set_view_mode("backup")
 
     def action_toggle_local(self) -> None:
         """ローカルファイル表示モードに切り替え"""

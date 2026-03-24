@@ -25,7 +25,7 @@ class ViewModeChanged(Message):
     """表示モード変更時のメッセージ"""
 
     def __init__(self, mode: str):
-        self.mode = mode  # diff, preview, info
+        self.mode = mode  # diff, backup, info
         super().__init__()
 
 
@@ -166,11 +166,11 @@ class ContentViewer(Vertical):
 
     def compose(self) -> ComposeResult:
         """タブ構成の定義"""
-        with TabbedContent(initial="preview", id="main-tabs"):
-            with TabPane("Preview", id="preview"):
+        with TabbedContent(initial="backup", id="main-tabs"):
+            with TabPane("Backup", id="backup"):
                 yield ScrollableContainer(
-                    Static("Select a file to preview", id="preview-display"),
-                    id="preview-container",
+                    Static("Select a file to view backup content", id="backup-display"),
+                    id="backup-container",
                 )
 
             with TabPane("Local", id="local"):
@@ -204,10 +204,10 @@ class ContentViewer(Vertical):
                     with Vertical(classes="split-right"):
                         yield ScrollableContainer(
                             Static(
-                                "Database content will appear here",
-                                id="split-preview-display",
+                                "Backup content will appear here",
+                                id="split-backup-display",
                             ),
-                            id="split-preview-container",
+                            id="split-backup-container",
                         )
 
     def set_file_adapter(self, adapter):
@@ -218,7 +218,7 @@ class ContentViewer(Vertical):
         """表示モードを設定（キーボードショートカット連動）"""
         mode_mapping = {
             "local": "local",
-            "preview": "preview",
+            "backup": "backup",
             "diff": "diff",
             "info": "info",
             "split": "split",
@@ -239,7 +239,7 @@ class ContentViewer(Vertical):
         """遅延実行による表示モード設定"""
         mode_mapping = {
             "local": "local",
-            "preview": "preview",
+            "backup": "backup",
             "diff": "diff",
             "info": "info",
             "split": "split",
@@ -276,12 +276,12 @@ class ContentViewer(Vertical):
         try:
             # 各タブのScrollableContainerを探してスクロール位置をリセット
             container_ids = [
-                "preview-container",
+                "backup-container",
                 "local-container",
                 "diff-container",
                 "info-container",
                 "split-local-container",
-                "split-preview-container",
+                "split-backup-container",
             ]
             for container_id in container_ids:
                 try:
@@ -304,8 +304,8 @@ class ContentViewer(Vertical):
 
             if active_tab == "local":
                 self._show_local_content(self.current_file)
-            elif active_tab == "preview":
-                self._show_preview(self.current_file, self.current_machine)
+            elif active_tab == "backup":
+                self._show_backup(self.current_file, self.current_machine)
             elif active_tab == "diff":
                 self._show_diff(self.current_file, self.current_machine)
             elif active_tab == "info":
@@ -376,16 +376,16 @@ class ContentViewer(Vertical):
         except Exception as e:
             self._show_error_in_tab("diff", f"Error loading diff: {str(e)}")
 
-    def _show_preview(self, file_info: Dict, machine_id: str):
-        """プレビュー表示"""
+    def _show_backup(self, file_info: Dict, machine_id: str):
+        """バックアップファイル内容表示"""
         try:
             # ローカル専用ファイルの場合は特別な処理
             if file_info.get("local_only", False):
-                self._show_local_only_preview(file_info)
+                self._show_local_only_backup(file_info)
                 return
             # 暗号化ファイルの場合は特別な処理
             if file_info.get("encrypted", False):
-                self._show_encrypted_preview(file_info, machine_id)
+                self._show_encrypted_backup(file_info, machine_id)
                 return
 
             # データベースファイルの内容を取得
@@ -398,7 +398,7 @@ class ContentViewer(Vertical):
                 preview_lines, file_info, "database"
             )
 
-            content_widget = self.query_one("#preview-display", Static)
+            content_widget = self.query_one("#backup-display", Static)
             content_widget.update(processed_content)
 
             # コンテンツの行数に応じて高さを動的に設定
@@ -406,10 +406,10 @@ class ContentViewer(Vertical):
             content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
 
         except Exception as e:
-            self._show_error_in_tab("preview", f"Error loading preview: {str(e)}")
+            self._show_error_in_tab("backup", f"Error loading backup: {str(e)}")
 
-    def _show_encrypted_preview(self, file_info: Dict, machine_id: str):
-        """暗号化ファイルのプレビュー"""
+    def _show_encrypted_backup(self, file_info: Dict, machine_id: str):
+        """暗号化ファイルのバックアップ内容表示"""
         # 暗号化ファイルの内容を取得
         preview_lines = self.file_adapter.get_file_content_preview(
             machine_id, file_info, max_lines=MAX_PREVIEW_LINES
@@ -420,15 +420,15 @@ class ContentViewer(Vertical):
             preview_lines, file_info, "encrypted database"
         )
 
-        content_widget = self.query_one("#preview-display", Static)
+        content_widget = self.query_one("#backup-display", Static)
         content_widget.update(processed_content)
 
         # コンテンツの行数に応じて高さを動的に設定
         line_count = len(preview_lines) if preview_lines else 1
         content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
 
-    def _show_local_only_preview(self, file_info: Dict):
-        """ローカル専用ファイルのプレビュー"""
+    def _show_local_only_backup(self, file_info: Dict):
+        """ローカル専用ファイルのバックアップタブ表示"""
         try:
             # ローカルファイルの内容を取得
             preview_lines = self.file_adapter.get_local_file_content_preview(
@@ -440,7 +440,7 @@ class ContentViewer(Vertical):
                 preview_lines, file_info, "local"
             )
 
-            content_widget = self.query_one("#preview-display", Static)
+            content_widget = self.query_one("#backup-display", Static)
             content_widget.update(processed_content)
 
             # コンテンツの行数に応じて高さを動的に設定
@@ -448,9 +448,7 @@ class ContentViewer(Vertical):
             content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
 
         except Exception as e:
-            self._show_error_in_tab(
-                "preview", f"Error loading local file preview: {str(e)}"
-            )
+            self._show_error_in_tab("backup", f"Error loading local file: {str(e)}")
 
     def _show_info(self, file_info: Dict):
         """ファイル情報表示"""
@@ -685,35 +683,35 @@ class ContentViewer(Vertical):
             except Exception as e:
                 local_syntax = Text(f"Error reading local file: {str(e)}", style="red")
 
-            # Database/Preview content
+            # Backup content
             try:
                 # 暗号化ファイルも含めて通常通り取得（file_adapterが自動的に復号化処理を行う）
-                preview_lines = self.file_adapter.get_file_content_preview(
+                backup_lines = self.file_adapter.get_file_content_preview(
                     machine_id, file_info, max_lines=MAX_PREVIEW_LINES
                 )
-                preview_syntax = self._process_file_content_for_display(
-                    preview_lines, file_info, "database"
+                backup_syntax = self._process_file_content_for_display(
+                    backup_lines, file_info, "database"
                 )
             except Exception as e:
-                preview_syntax = Text(
-                    f"Error reading database file: {str(e)}", style="red"
+                backup_syntax = Text(
+                    f"Error reading backup file: {str(e)}", style="red"
                 )
 
             # Update both split displays
             local_widget = self.query_one("#split-local-display", Static)
-            preview_widget = self.query_one("#split-preview-display", Static)
+            backup_widget = self.query_one("#split-backup-display", Static)
 
             local_widget.update(local_syntax)
-            preview_widget.update(preview_syntax)
+            backup_widget.update(backup_syntax)
 
         except Exception as e:
             # Fallback error display
             try:
                 local_widget = self.query_one("#split-local-display", Static)
-                preview_widget = self.query_one("#split-preview-display", Static)
+                backup_widget = self.query_one("#split-backup-display", Static)
                 error_text = Text(f"Error in split view: {str(e)}", style="red")
                 local_widget.update(error_text)
-                preview_widget.update(error_text)
+                backup_widget.update(error_text)
             except Exception:
                 # ウィジェットが見つからない場合は無視
                 pass
@@ -881,7 +879,7 @@ class ContentViewer(Vertical):
             return None, "Split"
 
         display_id_map = {
-            "preview": ("preview-display", "Preview"),
+            "backup": ("backup-display", "Backup"),
             "local": ("local-display", "Local"),
             "diff": ("diff-display", "Diff"),
             "info": ("info-display", "Info"),
