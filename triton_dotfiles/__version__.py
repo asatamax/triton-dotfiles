@@ -3,7 +3,7 @@
 Version information for triton-dotfiles
 """
 
-__version__ = "1.1.8"
+__version__ = "1.1.9"
 
 
 def get_version() -> str:
