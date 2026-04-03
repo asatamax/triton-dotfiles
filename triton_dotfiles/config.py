@@ -10,7 +10,7 @@ import socket
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
 
@@ -275,6 +275,7 @@ class Config:
     tui: TUIConfig
     hooks: HooksConfig
     max_file_size_mb: float = 3.0  # デフォルト3MB
+    skip_dirs: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Config":
@@ -343,6 +344,7 @@ class Config:
             tui=tui,
             hooks=hooks,
             max_file_size_mb=config_data.get("max_file_size_mb", 3.0),
+            skip_dirs=config_data.get("skip_dirs", []),
         )
 
 
@@ -1620,6 +1622,10 @@ class ConfigManager:
         # hooksは設定がある場合のみ追加
         if hooks_dict:
             result["config"]["hooks"] = hooks_dict
+
+        # skip_dirsは設定がある場合のみ追加
+        if self.config.skip_dirs:
+            result["config"]["skip_dirs"] = self.config.skip_dirs
 
         return result
 
