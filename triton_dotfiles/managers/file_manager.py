@@ -415,11 +415,17 @@ class FileManager:
         Unlike rglob("*"), this uses os.walk with topdown=True to prune
         directories before descending into them, avoiding traversal of
         large irrelevant subtrees (e.g., node_modules, .git).
+
+        Only yields regular files and symlinks to files. Special file types
+        (sockets, named pipes, device files) are silently skipped as they
+        cannot be meaningfully backed up.
         """
         for dirpath, dirnames, filenames in os.walk(root, topdown=True):
             dirnames[:] = [d for d in dirnames if d not in skip_dirs]
             for filename in filenames:
-                yield Path(dirpath) / filename
+                filepath = Path(dirpath) / filename
+                if filepath.is_file():
+                    yield filepath
 
     def collect_target_files(
         self, target, match_result: Optional[PatternMatchResult] = None
