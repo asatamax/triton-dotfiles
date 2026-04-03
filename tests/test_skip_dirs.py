@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import socket
 import tempfile
 from pathlib import Path
 
@@ -203,5 +205,58 @@ class TestSkipDirs:
             assert "main.py" in paths
             # "build" file at top level should still be yielded
             assert "build" in paths
+        finally:
+            Path(temp_path).unlink()
+
+    def test_socket_files_are_skipped(self):
+        """Socket files should be silently skipped (not regular files)."""
+        # Use /tmp directly to avoid AF_UNIX path length limit (108 bytes)
+        target_dir = Path(tempfile.mkdtemp(prefix="triton_"))
+        try:
+            (target_dir / "config").touch()
+
+            # Create a real Unix domain socket
+            sock_path = target_dir / "s.sock"
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.bind(str(sock_path))
+
+                config = _minimal_config(
+                    [{"path": str(target_dir), "recursive": True, "files": ["**/*"]}],
+                    skip_dirs=[],
+                )
+                _cm, fm, cfg_path = _create_config_and_manager(config)
+                try:
+                    paths = _collect_relative_paths(fm, _cm.config.targets[0])
+                    assert "config" in paths
+                    assert "s.sock" not in paths
+                finally:
+                    Path(cfg_path).unlink()
+            finally:
+                sock.close()
+        finally:
+            import shutil
+
+            shutil.rmtree(target_dir, ignore_errors=True)
+
+    def test_fifo_files_are_skipped(self, tmp_path):
+        """Named pipes (FIFO) should be silently skipped."""
+        target_dir = tmp_path / "project"
+        target_dir.mkdir()
+        (target_dir / "main.py").touch()
+
+        # Create a named pipe
+        fifo_path = target_dir / "my_pipe"
+        os.mkfifo(fifo_path)
+
+        config = _minimal_config(
+            [{"path": str(target_dir), "recursive": True, "files": ["**/*"]}],
+            skip_dirs=[],
+        )
+        _cm, fm, temp_path = _create_config_and_manager(config)
+        try:
+            paths = _collect_relative_paths(fm, _cm.config.targets[0])
+            assert "main.py" in paths
+            assert "my_pipe" not in paths
         finally:
             Path(temp_path).unlink()
