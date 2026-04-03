@@ -113,6 +113,27 @@ config:
     - ".git/**"
 
   # ============================================================
+  # Skip Directories (Recursive Targets Only)
+  # ============================================================
+  # Directories matching these names are skipped during recursive walks.
+  # This improves performance for large directory trees.
+  # Remove entries if you need to back up files inside those directories.
+  skip_dirs:
+    - .git
+    - node_modules
+    - __pycache__
+    - .gradle
+  # Additional recommendations (uncomment as needed):
+  #   - target
+  #   - build
+  #   - dist
+  #   - .next
+  #   - .nuxt
+  #   - vendor
+  #   - .tox
+  #   - .venv
+
+  # ============================================================
   # Encryption Settings
   # ============================================================
   encryption:

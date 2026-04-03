@@ -54,6 +54,7 @@ class TestConfigRoundtrip:
                 },
                 "blacklist": [".DS_Store", "*.log", "*.tmp"],
                 "encrypt_list": ["id_rsa*", "*.pem", "*secret*"],
+                "skip_dirs": ["build", "dist", "node_modules"],
                 "max_file_size_mb": 10.0,
                 "tui": {
                     "hide_system_files": False,
@@ -119,6 +120,10 @@ class TestConfigRoundtrip:
                 == original_dict["config"]["encrypt_list"]
             )
             assert (
+                result_dict["config"]["skip_dirs"]
+                == original_dict["config"]["skip_dirs"]
+            ), "skip_dirs was not preserved!"
+            assert (
                 result_dict["config"]["max_file_size_mb"]
                 == original_dict["config"]["max_file_size_mb"]
             )
@@ -179,6 +184,10 @@ class TestConfigRoundtrip:
                 manager2.config.tui.system_file_patterns
                 == original_dict["config"]["tui"]["system_file_patterns"]
             )
+            assert (
+                manager2.config.skip_dirs
+                == original_dict["config"]["skip_dirs"]
+            ), "skip_dirs was not preserved after save/reload!"
 
         finally:
             Path(temp_path).unlink()

@@ -3,6 +3,7 @@
 Dotfiles管理 - ファイル操作モジュール
 """
 
+import os
 import shutil
 import difflib
 import hashlib
@@ -404,6 +405,22 @@ class FileManager:
             print(f"  Warning: Failed to archive {file_path}: {e}")
             return None
 
+    def _walk_recursive(
+        self,
+        root: Path,
+        skip_dirs: frozenset[str],
+    ) -> Generator[Path, None, None]:
+        """Walk directory tree, pruning skip_dirs in-place for performance.
+
+        Unlike rglob("*"), this uses os.walk with topdown=True to prune
+        directories before descending into them, avoiding traversal of
+        large irrelevant subtrees (e.g., node_modules, .git).
+        """
+        for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+            for filename in filenames:
+                yield Path(dirpath) / filename
+
     def collect_target_files(
         self, target, match_result: Optional[PatternMatchResult] = None
     ) -> Generator[Tuple[Path, str], None, None]:
@@ -479,11 +496,9 @@ class FileManager:
             return
 
         if target.recursive:
-            # 再帰的にファイルを収集
-            for file_path in expanded_path.rglob("*"):
-                if not file_path.is_file():
-                    continue
-
+            # 再帰的にファイルを収集（skip_dirsでディレクトリ刈り込み）
+            skip_dirs = frozenset(self.config_manager.config.skip_dirs)
+            for file_path in self._walk_recursive(expanded_path, skip_dirs):
                 # Skip if already processed as direct path
                 if file_path in yielded_paths:
                     continue

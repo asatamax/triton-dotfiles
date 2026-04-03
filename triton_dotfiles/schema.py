@@ -1415,6 +1415,15 @@ CONFIG_FILE_SCHEMA: dict[str, Any] = {
             "type": "array[string]",
             "example": ["id_rsa*", "*.pem", "*secret*"],
         },
+        "skip_dirs": {
+            "description": "Directory names to skip during recursive file collection. "
+            "Improves performance by pruning entire directory subtrees. "
+            "Only affects recursive targets; direct paths bypass this setting.",
+            "required": False,
+            "type": "array[string]",
+            "default": [],
+            "example": [".git", "node_modules", "__pycache__", ".gradle"],
+        },
         "max_file_size_mb": {
             "description": "Skip files larger than this size (0 = no limit)",
             "required": False,
