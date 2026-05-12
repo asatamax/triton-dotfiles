@@ -2101,8 +2101,9 @@ def _display_resolved_files(resolved: dict, config_manager: ConfigManager):
 @click.option("--recursive", "-r", is_flag=True, help="Backup directory recursively")
 @click.option("--encrypt-files", "-e", help="Comma-separated list of files to encrypt")
 @click.option("--no-backup", is_flag=True, help="Don't backup config before modifying")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def target_add(ctx, path, files, recursive, encrypt_files, no_backup):
+def target_add(ctx, path, files, recursive, encrypt_files, no_backup, as_json):
     """Add a new target to the configuration."""
     try:
         config_manager = ConfigManager(ctx.obj["config_path"])
@@ -2120,6 +2121,28 @@ def target_add(ctx, path, files, recursive, encrypt_files, no_backup):
             encrypt_files=encrypt_list,
             backup=not no_backup,
         )
+
+        if as_json:
+            import json
+
+            payload = {
+                "success": result["success"],
+                "message": result["message"],
+            }
+            target_obj = result.get("target")
+            if target_obj is not None:
+                payload["target"] = {
+                    "path": target_obj.path,
+                    "files": target_obj.files,
+                    "recursive": target_obj.recursive,
+                    "encrypt_files": target_obj.encrypt_files,
+                }
+            if result.get("backup_path"):
+                payload["backup_path"] = str(result["backup_path"])
+            click.echo(json.dumps(payload, indent=2))
+            if not result["success"]:
+                sys.exit(1)
+            return
 
         if result["success"]:
             click.echo(f"{Fore.GREEN}{result['message']}{Style.RESET_ALL}")
@@ -2139,7 +2162,12 @@ def target_add(ctx, path, files, recursive, encrypt_files, no_backup):
             sys.exit(1)
 
     except Exception as e:
-        click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
+        if as_json:
+            import json
+
+            click.echo(json.dumps({"success": False, "message": str(e)}, indent=2))
+        else:
+            click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
 
 
@@ -2190,13 +2218,19 @@ def target_remove(ctx, path, no_backup, yes):
 
 @config_target.command("check")
 @click.argument("path")
+@click.option(
+    "--recursive",
+    "-r",
+    is_flag=True,
+    help="Check as if adding with --recursive (matches target add behavior)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def target_check(ctx, path, as_json):
+def target_check(ctx, path, recursive, as_json):
     """Check a path before adding as target."""
     try:
         config_manager = ConfigManager(ctx.obj["config_path"])
-        result = config_manager.check_target_path(path)
+        result = config_manager.check_target_path(path, recursive=recursive)
 
         if as_json:
             import json
