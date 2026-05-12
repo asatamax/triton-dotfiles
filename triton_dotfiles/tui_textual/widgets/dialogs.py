@@ -663,11 +663,15 @@ class ScrollableMessageDialog(ModalScreen):
             self.dismiss()
 
 
-class BackupSuccessDialog(ModalScreen[str]):
-    """バックアップ成功後のダイアログ（Commit&Push遷移オプション付き）"""
+class OperationSuccessWithCommitDialog(ModalScreen[str]):
+    """操作成功後のダイアログ（Commit&Push遷移オプション付き）
+
+    リポジトリを書き換える操作（Backup, Cleanup等）の完了後に表示し、
+    そのままGit Commit&Pushに進めるための共通ダイアログ。
+    """
 
     DEFAULT_CSS = """
-    BackupSuccessDialog {
+    OperationSuccessWithCommitDialog {
         align: center middle;
     }
 

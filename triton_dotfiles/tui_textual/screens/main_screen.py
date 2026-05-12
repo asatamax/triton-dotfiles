@@ -11,12 +11,12 @@ from ..widgets.file_list import FileList, FileSelected
 from ..widgets.content_viewer import ContentViewer, ViewModeChanged
 from ..widgets.status_bar import StatusBar
 from ..widgets.dialogs import (
-    BackupSuccessDialog,
     ConfirmationDialog,
     InputDialog,
     MessageDialog,
     ProgressDialog,
     MachineSelectDialog,
+    OperationSuccessWithCommitDialog,
     ScrollableMessageDialog,
     ThreeChoiceDialog,
 )
@@ -849,8 +849,12 @@ class MainScreen(Static):
             await self._perform_backup(dry_run=True)
         # choice == "no" の場合は何もしない
 
-    async def _handle_backup_success_choice(self, choice: str) -> None:
-        """バックアップ成功ダイアログからのcallback処理"""
+    async def _handle_commit_continuation_choice(self, choice: str) -> None:
+        """リポジトリ書き換え操作の成功ダイアログからのcallback処理
+
+        Backup/Cleanup等、リポジトリを書き換える操作の完了後に表示される
+        OperationSuccessWithCommitDialogからの選択をハンドルする。
+        """
         if choice == "commit":
             # 直接Commit & Pushを実行（確認ダイアログをバイパス）
             await self._perform_git_commit_push(dry_run=False)
@@ -895,12 +899,12 @@ class MainScreen(Static):
                 else:
                     # 実行時はCommit&Push遷移オプション付きダイアログ
                     self.app.push_screen(
-                        BackupSuccessDialog(
+                        OperationSuccessWithCommitDialog(
                             f"{operation} Success",
                             result["message"],
                             result.get("details", ""),
                         ),
-                        self._handle_backup_success_choice,
+                        self._handle_commit_continuation_choice,
                     )
             else:
                 # エラー時もスクロール可能ダイアログを使用
@@ -1147,19 +1151,31 @@ class MainScreen(Static):
                             error_list += f"\n... and {len(cleanup_result['errors']) - 5} more errors"
                         details += f"Errors:\n\n{error_list}\n\n"
 
-                    details += "Consider running 'Git Commit Push' to save these changes to the remote repository."
-
-                    await self.app.push_screen(
-                        ScrollableMessageDialog(
-                            "Repository Cleanup Complete",
-                            f"Deleted {deleted} file(s), {errors} error(s) occurred.",
-                            details,
-                            "success" if errors == 0 else "warning",
-                        )
-                    )
+                    summary = f"Deleted {deleted} file(s), {errors} error(s) occurred."
 
                     # データを再読み込み（ファイルが削除されたので更新、マシン選択を維持）
                     self._refresh_data_preserve_machine()
+
+                    if deleted > 0 and errors == 0:
+                        # クリーンな成功時はBackupと同様にCommit&Push遷移オプションを提示
+                        self.app.push_screen(
+                            OperationSuccessWithCommitDialog(
+                                "Repository Cleanup Complete",
+                                summary,
+                                details,
+                            ),
+                            self._handle_commit_continuation_choice,
+                        )
+                    else:
+                        # エラー混じり、もしくは削除0で警告のみ → 従来のScrollable表示
+                        await self.app.push_screen(
+                            ScrollableMessageDialog(
+                                "Repository Cleanup Complete",
+                                summary,
+                                details,
+                                "warning",
+                            )
+                        )
                 else:
                     await self.app.push_screen(
                         MessageDialog(
