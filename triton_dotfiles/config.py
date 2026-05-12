@@ -748,6 +748,10 @@ class ConfigManager:
         """
         Check if path is covered by an existing recursive target.
 
+        Targets whose paths contain undefined environment variables are skipped:
+        an unresolved ``${VAR}`` would otherwise be interpreted as a literal
+        path component and resolved against cwd, producing false positives.
+
         Returns:
             Tuple of (is_covered, covering_target_path)
         """
@@ -755,6 +759,9 @@ class ConfigManager:
 
         for target in self.config.targets:
             if not target.recursive:
+                continue
+
+            if self.should_skip_target(target):
                 continue
 
             target_path = Path(target.path).expanduser().resolve()
@@ -775,6 +782,9 @@ class ConfigManager:
         """
         Check if a file path is covered by an existing non-recursive target's files list.
 
+        Targets whose paths contain undefined environment variables are skipped
+        for the same reason as :meth:`is_path_covered_by_recursive`.
+
         Args:
             normalized_path: Normalized path to check (e.g., ~/foo/bar.txt)
 
@@ -790,6 +800,9 @@ class ConfigManager:
         for target in self.config.targets:
             # Skip recursive targets (handled by is_path_covered_by_recursive)
             if target.recursive:
+                continue
+
+            if self.should_skip_target(target):
                 continue
 
             target_path = Path(target.path).expanduser().resolve()
@@ -828,6 +841,9 @@ class ConfigManager:
             Tuple of (is_matched, matched_pattern)
         """
         import fnmatch
+
+        if self.should_skip_target(target):
+            return (False, None)
 
         file_path = Path(normalized_file_path).expanduser().resolve()
         target_path = Path(target.path).expanduser().resolve()
@@ -1077,6 +1093,11 @@ class ConfigManager:
         """
         Check if adding a recursive target would cover existing targets.
 
+        Targets whose paths contain undefined environment variables are skipped:
+        an unresolved ``${VAR}`` would otherwise be interpreted as a literal
+        path component and resolved against cwd, producing false positives that
+        change with the user's current directory.
+
         Returns:
             List of existing target paths that would be covered
         """
@@ -1087,6 +1108,9 @@ class ConfigManager:
         new_path = Path(normalized_path).expanduser().resolve()
 
         for target in self.config.targets:
+            if self.should_skip_target(target):
+                continue
+
             target_path = Path(target.path).expanduser().resolve()
 
             try:
@@ -1097,6 +1121,18 @@ class ConfigManager:
                 continue
 
         return covered
+
+    def targets_with_undefined_env_vars(self) -> list[str]:
+        """Return paths of targets that contain undefined environment variables.
+
+        These are skipped from conflict detection because their literal
+        ``${VAR}`` form cannot be reliably compared against filesystem paths.
+        """
+        return [
+            target.path
+            for target in self.config.targets
+            if self.should_skip_target(target)
+        ]
 
     def add_target(
         self,
@@ -1454,9 +1490,15 @@ class ConfigManager:
 
         return result
 
-    def check_target_path(self, path: str) -> dict:
+    def check_target_path(self, path: str, recursive: bool = False) -> dict:
         """
         Check a path for potential target addition.
+
+        Args:
+            path: The path to check (before normalization).
+            recursive: When True, also evaluate the recursive-coverage check
+                applied by :meth:`add_target` so that ``target check`` and
+                ``target add`` report consistent results.
 
         Returns detailed information about the path and any conflicts.
         """
@@ -1491,6 +1533,15 @@ class ConfigManager:
             "suggestions": [],
         }
 
+        # Surface skipped targets so users know coverage detection is partial.
+        skipped_targets = self.targets_with_undefined_env_vars()
+        if skipped_targets:
+            for target_path in skipped_targets:
+                result["warnings"].append(
+                    f"Target {target_path} skipped from conflict detection "
+                    f"(contains undefined environment variable)"
+                )
+
         # Check for duplicates
         existing = self.find_target_by_path(normalized)
         if existing:
@@ -1512,6 +1563,21 @@ class ConfigManager:
                 f"File is already included in target {target_path} "
                 f"(matches pattern: {matched_pattern})"
             )
+
+        # When the caller is about to add as recursive, mirror add_target's
+        # coverage check so check/add agree.
+        if recursive:
+            would_cover = self.would_cover_existing_targets(normalized, recursive=True)
+            if would_cover:
+                result["conflicts"].append(
+                    f"Recursive target {normalized} would cover existing targets: "
+                    f"{', '.join(would_cover)}. Remove them first."
+                )
+        result["would_cover"] = (
+            self.would_cover_existing_targets(normalized, recursive=True)
+            if recursive
+            else []
+        )
 
         # Count files if directory exists
         if expanded.exists() and expanded.is_dir():

@@ -78,13 +78,19 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 }
             },
             "options": {
+                "--recursive": {
+                    "short": "-r",
+                    "type": "flag",
+                    "description": "Check as if adding with --recursive (matches target add behavior)",
+                },
                 "--json": {
                     "type": "flag",
                     "description": "Output as JSON for programmatic parsing",
-                }
+                },
             },
             "examples": [
                 "triton config target check ~/.docker",
+                "triton config target check ~/.docker --recursive",
                 "triton config target check /Users/name/.config/app --json",
             ],
             "returns": {
@@ -95,7 +101,8 @@ CONFIG_SCHEMA: dict[str, Any] = {
                 "is_file": "True if path is a file",
                 "file_count": "Number of files (if directory)",
                 "conflicts": "List of reasons why target cannot be added",
-                "warnings": "List of potential issues",
+                "warnings": "List of potential issues (e.g., targets skipped from conflict detection due to undefined env vars)",
+                "would_cover": "Existing targets that would be covered when adding with --recursive (empty unless --recursive is set)",
                 "suggestions": "Recommended commands to add this target",
                 "backed_up": "Whether this path is currently backed up by any target",
                 "matched_target": "Target that covers this path ({path, recursive} or null)",
@@ -132,17 +139,23 @@ CONFIG_SCHEMA: dict[str, Any] = {
                     "type": "flag",
                     "description": "Skip creating config.yml backup before modifying",
                 },
+                "--json": {
+                    "type": "flag",
+                    "description": "Output result as JSON for programmatic parsing",
+                },
             },
             "examples": [
                 "triton config target add ~/.docker --recursive",
                 "triton config target add ~/project --files '*.md,*.yml'",
                 "triton config target add ~/.secrets --recursive --encrypt-files 'api_key,token.json'",
+                "triton config target add ~/.docker --recursive --json",
             ],
             "constraints": [
                 "Cannot add path that already exists as a target",
                 "Cannot add path that is covered by an existing recursive target",
                 "Cannot add recursive target that would cover existing targets",
                 "Non-recursive targets MUST specify --files",
+                "Targets whose paths contain undefined environment variables are skipped from conflict detection",
             ],
             "side_effects": [
                 "Creates config.yml.bak.N backup (unless --no-backup)",
