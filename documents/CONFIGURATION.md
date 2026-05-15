@@ -307,7 +307,8 @@ triton config target list --path ~/.docker --json  # Filter by path
 
 # Check backup coverage
 triton config target check ~/.docker
-triton config target check ~/.config/app --json  # Includes backed_up field
+triton config target check ~/.docker --recursive       # Preview recursive add coverage
+triton config target check ~/.config/app --json        # Includes backed_up / would_cover fields
 
 # Ensure a file is backed up (idempotent, recommended for automation)
 triton config target ensure ~/.zshrc --json
@@ -316,6 +317,7 @@ triton config target ensure ~/.zshrc --json
 triton config target add ~/.docker --recursive
 triton config target add ~/ --files '.zshrc,.gitconfig'
 triton config target add ~/.secrets -r --encrypt-files 'api_key,token.json'
+triton config target add ~/.docker --recursive --json  # Machine-readable result
 
 # Modify existing targets
 triton config target modify ~/ --add-files '.gitconfig,.gitignore_global'
