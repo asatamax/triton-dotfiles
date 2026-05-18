@@ -2,9 +2,10 @@
 Content viewer widget for the Textual TUI
 """
 
-from textual.widgets import Static, TabbedContent, TabPane
+from textual.widgets import Static, TabbedContent, TabPane, TextArea
 from textual.containers import ScrollableContainer, Vertical, Horizontal
 from textual.message import Message
+from textual.reactive import reactive
 from textual.app import ComposeResult
 from rich.syntax import Syntax
 from rich.text import Text
@@ -155,7 +156,23 @@ class ContentViewer(Vertical):
         height: 1fr;
         width: 1fr;
     }
+
+    /* Select mode: TextArea overlay for mouse text selection */
+    ContentViewer .select-area {
+        height: 1fr;
+        width: 1fr;
+    }
+
+    ContentViewer .hidden {
+        display: none;
+    }
     """
+
+    # Tabs that support entering "select mode" (TextArea-based selectable view).
+    # Info tab is information-only; Split tab has dual panes and is out of scope.
+    SELECT_MODE_TABS = ("backup", "local", "diff")
+
+    select_mode: reactive[bool] = reactive(False)
 
     def __init__(self):
         super().__init__()
@@ -172,17 +189,38 @@ class ContentViewer(Vertical):
                     Static("Select a file to view backup content", id="backup-display"),
                     id="backup-container",
                 )
+                yield TextArea(
+                    "",
+                    id="backup-textarea",
+                    read_only=True,
+                    show_line_numbers=True,
+                    classes="select-area hidden",
+                )
 
             with TabPane("Local", id="local"):
                 yield ScrollableContainer(
                     Static("Select a file to view local content", id="local-display"),
                     id="local-container",
                 )
+                yield TextArea(
+                    "",
+                    id="local-textarea",
+                    read_only=True,
+                    show_line_numbers=True,
+                    classes="select-area hidden",
+                )
 
             with TabPane("Diff", id="diff"):
                 yield ScrollableContainer(
                     Static("Select a file to view diff", id="diff-display"),
                     id="diff-container",
+                )
+                yield TextArea(
+                    "",
+                    id="diff-textarea",
+                    read_only=True,
+                    show_line_numbers=True,
+                    classes="select-area hidden",
                 )
 
             with TabPane("Info", id="info"):
@@ -258,6 +296,10 @@ class ContentViewer(Vertical):
 
     def update_content(self, file_info: Dict, machine_id: str):
         """コンテンツを更新（全タブ対応）"""
+        # Select mode is a per-file transient state; reset on file switch.
+        if self.select_mode:
+            self.select_mode = False
+
         self.current_file = file_info
         self.current_machine = machine_id
 
@@ -320,6 +362,10 @@ class ContentViewer(Vertical):
         self, event: TabbedContent.TabActivated
     ) -> None:
         """タブがアクティブになった時の処理"""
+        # Select mode is scoped to a single tab view; reset on tab switch.
+        if self.select_mode:
+            self.select_mode = False
+
         # タブが切り替わった時に現在のファイル情報でコンテンツを更新
         if self.current_file:
             self._update_active_tab_content()
@@ -905,6 +951,169 @@ class ContentViewer(Vertical):
                 return str(renderable), tab_name
         except Exception:
             return None, ""
+
+    def get_select_mode_text(self) -> tuple[Optional[str], str, bool]:
+        """Get copy-target text while in select mode.
+
+        Returns:
+            (text, tab_name, was_selection)
+            - text: the string to copy, or None when unavailable
+            - tab_name: human-readable tab label (Backup/Local/Diff)
+            - was_selection: True if the user had an active range selection
+        """
+        if not self.select_mode:
+            return None, "", False
+
+        try:
+            tabs = self.query_one("#main-tabs", TabbedContent)
+            active_tab = tabs.active
+        except Exception:
+            return None, "", False
+
+        if active_tab not in self.SELECT_MODE_TABS:
+            return None, "", False
+
+        try:
+            textarea = self.query_one(f"#{active_tab}-textarea", TextArea)
+        except Exception:
+            return None, "", False
+
+        tab_label = {"backup": "Backup", "local": "Local", "diff": "Diff"}.get(
+            active_tab, ""
+        )
+
+        selected = textarea.selected_text
+        if selected:
+            return selected, tab_label, True
+        return textarea.text, tab_label, False
+
+    def enter_select_mode(self) -> None:
+        """Enter selectable preview mode for the active tab.
+
+        Loads the current preview content into a read-only TextArea so the
+        user can mouse-select and copy text. Encrypted files are handled the
+        same as plain files: the decrypted string already lives in memory, so
+        no new temp file is created on disk.
+        """
+        try:
+            tabs = self.query_one("#main-tabs", TabbedContent)
+            active_tab = tabs.active
+        except Exception:
+            return
+
+        if active_tab == "split":
+            self.app.notify(
+                "Select mode is not available in Split view.",
+                severity="warning",
+            )
+            return
+
+        if active_tab not in self.SELECT_MODE_TABS:
+            # Info tab: no need for text selection.
+            return
+
+        text, _ = self.get_copyable_text()
+        if text is None or not text:
+            self.app.notify("No content to select.", severity="warning")
+            return
+
+        try:
+            textarea = self.query_one(f"#{active_tab}-textarea", TextArea)
+        except Exception:
+            return
+
+        textarea.text = text
+        textarea.language = self._guess_textarea_language(active_tab)
+        # Reset cursor to top so the user starts from a predictable position.
+        textarea.move_cursor((0, 0))
+        self.select_mode = True
+
+    def exit_select_mode(self) -> None:
+        """Leave select mode, restoring the rich preview."""
+        if self.select_mode:
+            self.select_mode = False
+
+    def watch_select_mode(self, mode: bool) -> None:
+        """Swap rich preview <-> TextArea visibility for selectable tabs."""
+        for tab_id in self.SELECT_MODE_TABS:
+            try:
+                container = self.query_one(f"#{tab_id}-container", ScrollableContainer)
+                textarea = self.query_one(f"#{tab_id}-textarea", TextArea)
+            except Exception:
+                continue
+
+            if mode:
+                container.add_class("hidden")
+                textarea.remove_class("hidden")
+            else:
+                textarea.add_class("hidden")
+                container.remove_class("hidden")
+                # Drop decrypted content from the TextArea once mode exits,
+                # so it isn't sitting in widget state any longer than needed.
+                textarea.text = ""
+
+        if mode:
+            self.border_title = "── SELECT ── (ESC to exit)"
+            try:
+                tabs = self.query_one("#main-tabs", TabbedContent)
+                textarea = self.query_one(f"#{tabs.active}-textarea", TextArea)
+                textarea.focus()
+            except Exception:
+                pass
+        else:
+            self.border_title = None
+
+    def _guess_textarea_language(self, tab_id: str) -> Optional[str]:
+        """Map the current file's extension to a TextArea syntax language.
+
+        Returns None for unknown types so TextArea falls back to plain text.
+        """
+        # Diff tab content has its own structure; let tree-sitter handle if
+        # available, otherwise plain text is fine for selection.
+        if tab_id == "diff":
+            return None
+
+        if not self.current_file:
+            return None
+
+        filename = self.current_file.get("name", "")
+        if not filename:
+            return None
+
+        lower = filename.lower()
+        ext_map = {
+            ".py": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "javascript",
+            ".tsx": "javascript",
+            ".sh": "bash",
+            ".bash": "bash",
+            ".zsh": "bash",
+            ".json": "json",
+            ".yaml": "yaml",
+            ".yml": "yaml",
+            ".toml": "toml",
+            ".md": "markdown",
+            ".html": "html",
+            ".htm": "html",
+            ".css": "css",
+            ".sql": "sql",
+            ".go": "go",
+            ".rs": "rust",
+            ".xml": "xml",
+            ".java": "java",
+            ".kt": "kotlin",
+        }
+        for ext, lang in ext_map.items():
+            if lower.endswith(ext):
+                return lang
+
+        # Shell-flavored dotfiles without an extension (.zshrc, .bashrc, etc).
+        if "zsh" in lower or "bash" in lower or "profile" in lower:
+            return "bash"
+
+        return None
 
     def add_future_tab(
         self, tab_id: str, title: str, initial_message: Optional[str] = None
