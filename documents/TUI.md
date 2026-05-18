@@ -131,6 +131,17 @@ triton archive clean --keep 5    # Keep only latest 5 archives
 | `D` | Open diff in VSCode/Cursor/Windsurf |
 | `E` | Edit local file in VSCode/Cursor/Windsurf |
 
+### Clipboard / Select Mode
+
+| Key | Action |
+|-----|--------|
+| `c` | Copy active tab content (or selection in select mode) to clipboard |
+| `y` | Same as `c` (vim-style yank) |
+| `v` | Enter select mode (preview becomes a selectable TextArea) |
+| `ESC` | Exit select mode and return to rich preview |
+
+Select mode swaps the rich preview for a read-only TextArea so the user can mouse-select text. Available on Backup / Local / Diff tabs. Encrypted files are handled in-memory; nothing is written to disk. Select mode is per-file and resets automatically on file or tab switch.
+
 ### Other
 
 | Key | Action |

@@ -156,6 +156,11 @@ class TritonTUIApp(App):
         Binding("F", "show_in_finder", "Finder"),
         # クリップボード
         Binding("c", "copy_to_clipboard", "Copy"),
+        # vim 流の yank: c と同じ挙動（フッターには出さない）
+        Binding("y", "copy_to_clipboard", "Yank", show=False),
+        # 選択モード（マウスでテキスト選択して通常のクリップボードコピー）
+        Binding("v", "enter_select_mode", "Select"),
+        Binding("escape", "exit_select_mode", "Exit Select", show=False),
         # UI 操作
         Binding("t", "toggle_left_pane", "Toggle Pane"),
     ]
@@ -269,7 +274,9 @@ class TritonTUIApp(App):
         key_line("1-5", "Quick tab switching")
 
         section("Clipboard")
-        key_line("c", "Copy current tab content to clipboard")
+        key_line("c / y", "Copy (selection if any, otherwise full content)")
+        key_line("v", "Enter select mode (mouse-select to copy)")
+        key_line("ESC", "Exit select mode")
 
         section("External Editor")
         key_line("D", "VSCode Diff - Compare local vs database")
@@ -401,6 +408,16 @@ class TritonTUIApp(App):
         """現在のタブのコンテンツをクリップボードにコピー"""
         main_screen = self.query_one(MainScreen)
         main_screen.copy_to_clipboard()
+
+    def action_enter_select_mode(self) -> None:
+        """選択モードに入る（プレビューを選択可能なTextAreaに切替）"""
+        main_screen = self.query_one(MainScreen)
+        main_screen.enter_select_mode()
+
+    def action_exit_select_mode(self) -> None:
+        """選択モードを抜けてリッチプレビューに戻る"""
+        main_screen = self.query_one(MainScreen)
+        main_screen.exit_select_mode()
 
     def action_cleanup_repository(self) -> None:
         """リポジトリクリーンアップを実行"""

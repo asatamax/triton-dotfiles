@@ -619,9 +619,23 @@ class MainScreen(Static):
                 MessageDialog("Git Pull Error", f"Git pull failed: {str(e)}", "error")
             )
 
+    def enter_select_mode(self) -> None:
+        """選択モードへ遷移（ContentViewer に委譲）"""
+        self.content_viewer.enter_select_mode()
+
+    def exit_select_mode(self) -> None:
+        """選択モードから退出（ContentViewer に委譲）"""
+        self.content_viewer.exit_select_mode()
+
     def copy_to_clipboard(self) -> None:
         """現在アクティブなタブのコンテンツをクリップボードにコピー"""
-        text, tab_name = self.content_viewer.get_copyable_text()
+        # Select mode prefers TextArea's selection range; falls back to full
+        # text. Outside select mode, behave the same as before.
+        was_selection = False
+        if self.content_viewer.select_mode:
+            text, tab_name, was_selection = self.content_viewer.get_select_mode_text()
+        else:
+            text, tab_name = self.content_viewer.get_copyable_text()
 
         if text is None:
             if tab_name == "Split":
@@ -658,12 +672,20 @@ class MainScreen(Static):
                         check=True,
                     )
 
-            # 行数を数えてフィードバック
-            line_count = len(text.splitlines())
-            self.app.notify(
-                f"Copied {tab_name} content ({line_count} lines)",
-                severity="information",
-            )
+            if was_selection:
+                # Range selection: char count is more meaningful than line
+                # count, since selections are often inline / partial-line.
+                char_count = len(text)
+                self.app.notify(
+                    f"Copied selection ({char_count} chars)",
+                    severity="information",
+                )
+            else:
+                line_count = len(text.splitlines())
+                self.app.notify(
+                    f"Copied {tab_name} content ({line_count} lines)",
+                    severity="information",
+                )
         except FileNotFoundError:
             self.app.notify(
                 "Clipboard tool not found (pbcopy/xclip/xsel)",
