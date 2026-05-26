@@ -1,7 +1,7 @@
 """
 Dummy encryption implementation for triton-dotfiles.
 
-Fallback implementation when the cryptography library is not available.
+Fail-closed implementation when the cryptography library is not available.
 """
 
 from pathlib import Path
@@ -9,7 +9,7 @@ from typing import Optional, Union
 
 
 class DummyEncryptionManager:
-    """Dummy implementation when the cryptography library is not available."""
+    """Fail-closed implementation when cryptography is not available."""
 
     def __init__(
         self,
@@ -24,17 +24,13 @@ class DummyEncryptionManager:
         return self.key_file.exists()
 
     def encrypt_data(self, data: bytes, file_path: str = "") -> bytes:
-        """Dummy implementation: return data as-is."""
-        return data
+        """Fail instead of silently writing plaintext."""
+        raise RuntimeError("cryptography library is required for encryption")
 
     def decrypt_data(self, encrypted_data: bytes) -> bytes:
-        """Dummy implementation: return data as-is."""
-        return encrypted_data
+        """Fail instead of treating encrypted data as plaintext."""
+        raise RuntimeError("cryptography library is required for decryption")
 
     def decrypt_file_content(self, file_path: Union[str, Path]) -> bytes:
-        """Dummy implementation: read file content as-is."""
-        try:
-            with open(file_path, "rb") as f:
-                return f.read()
-        except Exception as e:
-            raise Exception(f"File reading failed: {e}")
+        """Fail instead of treating encrypted files as plaintext."""
+        raise RuntimeError("cryptography library is required for decryption")
