@@ -16,20 +16,20 @@ CRYPTOGRAPHY_AVAILABLE = importlib.util.find_spec("cryptography") is not None
 
 def get_encryption_manager(
     key_file: Optional[Union[str, Path]] = None,
-) -> Union[EncryptionManager, DummyEncryptionManager]:
+) -> EncryptionManager:
     """
-    Get an appropriate EncryptionManager instance.
+    Get an EncryptionManager instance.
 
     Args:
         key_file: Path to the key file.
 
     Returns:
-        EncryptionManager or DummyEncryptionManager instance.
+        EncryptionManager instance.
     """
-    if CRYPTOGRAPHY_AVAILABLE:
-        return EncryptionManager(key_file)
-    else:
-        return DummyEncryptionManager(key_file)
+    if not CRYPTOGRAPHY_AVAILABLE:
+        raise ImportError("cryptography library is required for encryption")
+
+    return EncryptionManager(key_file)
 
 
 def create_encryption_key(
@@ -48,11 +48,15 @@ def create_encryption_key(
 
     Raises:
         FileExistsError: If key exists and force is False.
+        ImportError: If cryptography is not available.
     """
     if key_path is None:
         key_path = Path.home() / ".config" / "triton" / "master.key"
 
     key_path = Path(key_path)
+
+    if not CRYPTOGRAPHY_AVAILABLE:
+        raise ImportError("cryptography library is required to create encryption keys")
 
     # 既存キーのチェック
     if key_path.exists() and not force:
@@ -63,12 +67,6 @@ def create_encryption_key(
         )
 
     key_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not CRYPTOGRAPHY_AVAILABLE:
-        # cryptographyが利用できない場合はダミーファイルを作成
-        key_path.write_text("dummy_key_for_testing")
-        key_path.chmod(0o600)
-        return str(key_path)
 
     # 32バイトのランダムキーを保存
     key = generate_random_key()

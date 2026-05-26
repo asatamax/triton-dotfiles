@@ -330,6 +330,26 @@ class FileManager:
             restore_archive_root = self.create_restore_archive()
         return restore_archive_root
 
+    def _archive_restore_destination(
+        self,
+        destination_file: Path,
+        restore_archive_root: Optional[Path],
+        results: Dict[str, List[str]],
+    ) -> Optional[Path]:
+        """復元で上書きされる実ファイルを必要に応じてアーカイブする"""
+        if not destination_file.exists():
+            return restore_archive_root
+
+        restore_archive_root = self._ensure_restore_archive_root(restore_archive_root)
+        archived_file = self.archive_existing_file(
+            destination_file, restore_archive_root
+        )
+        if archived_file:
+            print(f"Archived existing: {destination_file.name}")
+            results["backed_up"].append(str(archived_file))
+
+        return restore_archive_root
+
     def _is_file_unchanged_for_restore(
         self, backup_file: Path, actual_dest_file: Path, relative_path: Path
     ) -> bool:
@@ -911,16 +931,9 @@ class FileManager:
                 try:
                     if not dry_run:
                         # 既存ファイルのアーカイブ（必要な時にアーカイブルート作成）
-                        if dest_file.exists():
-                            restore_archive_root = self._ensure_restore_archive_root(
-                                restore_archive_root
-                            )
-                            archived_file = self.archive_existing_file(
-                                dest_file, restore_archive_root
-                            )
-                            if archived_file:
-                                print(f"Archived existing: {dest_file.name}")
-                                results["backed_up"].append(str(archived_file))
+                        restore_archive_root = self._archive_restore_destination(
+                            actual_dest_file, restore_archive_root, results
+                        )
 
                         # ディレクトリ作成
                         dest_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1051,16 +1064,9 @@ class FileManager:
 
                 if not dry_run:
                     # 既存ファイルのアーカイブ（必要な時にアーカイブルート作成）
-                    if dest_file.exists():
-                        restore_archive_root = self._ensure_restore_archive_root(
-                            restore_archive_root
-                        )
-                        archived_file = self.archive_existing_file(
-                            dest_file, restore_archive_root
-                        )
-                        if archived_file:
-                            print(f"Archived existing: {dest_file.name}")
-                            results["backed_up"].append(str(archived_file))
+                    restore_archive_root = self._archive_restore_destination(
+                        actual_dest_file, restore_archive_root, results
+                    )
 
                     # ディレクトリ作成
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
