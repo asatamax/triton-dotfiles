@@ -3,6 +3,7 @@
 Module for managing Git operations.
 """
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Dict, Any
@@ -305,6 +306,60 @@ class GitManager:
                 "output": "",
                 "error": str(e),
             }
+
+    def get_status_summary(self) -> Dict[str, Any]:
+        """ワーキングツリーとupstreamの乖離サマリーを取得する。
+
+        TUIの常駐インジケータ用に頻繁に呼ばれるため、ネットワークアクセス
+        （fetch）は行わない。behindは直近のfetch/pull時点の情報になる。
+
+        Returns:
+            Dictionary with summary:
+            - success: 取得に成功したか
+            - uncommitted: 未コミットの変更ファイル数（staged/unstaged/untracked）
+            - ahead: upstreamより先行しているコミット数（未push）
+            - behind: upstreamより遅れているコミット数
+            - has_upstream: upstreamが設定されているか
+        """
+        summary = {
+            "success": False,
+            "uncommitted": 0,
+            "ahead": 0,
+            "behind": 0,
+            "has_upstream": False,
+        }
+
+        if not self.is_git_repository():
+            return summary
+
+        try:
+            result = self._run_git_command(
+                ["status", "--porcelain=v1", "--branch"], timeout=10
+            )
+            if result.returncode != 0:
+                return summary
+
+            lines = result.stdout.splitlines()
+            summary["uncommitted"] = sum(
+                1 for line in lines if line and not line.startswith("##")
+            )
+
+            # ヘッダー例: "## main...origin/main [ahead 1, behind 2]"
+            if lines and lines[0].startswith("##"):
+                header = lines[0]
+                summary["has_upstream"] = "..." in header
+                ahead_match = re.search(r"\[ahead (\d+)", header)
+                if ahead_match:
+                    summary["ahead"] = int(ahead_match.group(1))
+                behind_match = re.search(r"behind (\d+)\]", header)
+                if behind_match:
+                    summary["behind"] = int(behind_match.group(1))
+
+            summary["success"] = True
+            return summary
+
+        except Exception:
+            return summary
 
     def check_remote_status(self) -> Dict[str, Any]:
         """
