@@ -8,7 +8,7 @@ Centralizes magic numbers and configuration values used across TUI components.
 MAX_PREVIEW_LINES = 1000
 """Maximum number of lines to display in file preview."""
 
-MAX_DIFF_LINES = 50
+MAX_DIFF_LINES = 1000
 """Maximum number of diff lines to display before truncation."""
 
 # Binary detection

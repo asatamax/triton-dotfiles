@@ -132,7 +132,6 @@ class ContentViewer(Vertical):
         width: 1fr;
         padding: 1;
         height: auto;
-        min-height: 100vh;
     }
     
     /* Split view specific styles */
@@ -180,6 +179,7 @@ class ContentViewer(Vertical):
         self.current_machine: str = ""
         self.file_adapter = None
         self._tabbed_content: Optional[TabbedContent] = None
+        self.word_wrap: bool = True
 
     def compose(self) -> ComposeResult:
         """タブ構成の定義"""
@@ -248,9 +248,40 @@ class ContentViewer(Vertical):
                             id="split-backup-container",
                         )
 
+    # wrap切り替え対象の表示ウィジェット（Infoタブは常に折り返しで問題ない）
+    WRAPPABLE_DISPLAY_IDS = (
+        "backup-display",
+        "local-display",
+        "diff-display",
+        "split-local-display",
+        "split-backup-display",
+    )
+
     def set_file_adapter(self, adapter):
         """file_adapterを設定"""
         self.file_adapter = adapter
+
+    def toggle_word_wrap(self) -> None:
+        """Word wrapを切り替え（OFF時は横スクロールで全文を確認できる）"""
+        self.word_wrap = not self.word_wrap
+        self._apply_wrap_width()
+        if self.current_file:
+            self._update_active_tab_content()
+        state = "on" if self.word_wrap else "off (scroll horizontally)"
+        self.app.notify(f"Word wrap: {state}")
+
+    def _apply_wrap_width(self) -> None:
+        """wrap状態に応じて表示幅を切り替え
+
+        wrap OFF時はwidth:autoにすることでStaticの仮想幅がコンテンツの
+        最長行に追従し、ScrollableContainerの横スクロールが有効になる。
+        """
+        width = "1fr" if self.word_wrap else "auto"
+        for display_id in self.WRAPPABLE_DISPLAY_IDS:
+            try:
+                self.query_one(f"#{display_id}", Static).styles.width = width
+            except Exception:
+                pass
 
     def set_view_mode(self, mode: str):
         """表示モードを設定（キーボードショートカット連動）"""
@@ -401,7 +432,7 @@ class ContentViewer(Vertical):
             else:
                 # 差分を表示
                 diff_lines = diff_data.get("diff_lines", [])
-                content = Text()
+                content = Text(no_wrap=not self.word_wrap)
 
                 for i, line in enumerate(diff_lines[:MAX_DIFF_LINES]):
                     if i > 0:
@@ -447,10 +478,6 @@ class ContentViewer(Vertical):
             content_widget = self.query_one("#backup-display", Static)
             content_widget.update(processed_content)
 
-            # コンテンツの行数に応じて高さを動的に設定
-            line_count = len(preview_lines) if preview_lines else 1
-            content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
-
         except Exception as e:
             self._show_error_in_tab("backup", f"Error loading backup: {str(e)}")
 
@@ -469,10 +496,6 @@ class ContentViewer(Vertical):
         content_widget = self.query_one("#backup-display", Static)
         content_widget.update(processed_content)
 
-        # コンテンツの行数に応じて高さを動的に設定
-        line_count = len(preview_lines) if preview_lines else 1
-        content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
-
     def _show_local_only_backup(self, file_info: Dict):
         """ローカル専用ファイルのバックアップタブ表示"""
         try:
@@ -488,10 +511,6 @@ class ContentViewer(Vertical):
 
             content_widget = self.query_one("#backup-display", Static)
             content_widget.update(processed_content)
-
-            # コンテンツの行数に応じて高さを動的に設定
-            line_count = len(preview_lines) if preview_lines else 1
-            content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
 
         except Exception as e:
             self._show_error_in_tab("backup", f"Error loading local file: {str(e)}")
@@ -840,10 +859,16 @@ class ContentViewer(Vertical):
             filename = file_info.get("name", "")
             try:
                 lexer = Syntax.guess_lexer(filename, content_str)
-                return Syntax(content_str, lexer, theme="monokai", line_numbers=True)
+                return Syntax(
+                    content_str,
+                    lexer,
+                    theme="monokai",
+                    line_numbers=True,
+                    word_wrap=self.word_wrap,
+                )
             except Exception:
                 # シンタックスハイライトに失敗した場合はプレーンテキスト
-                return Text(content_str)
+                return Text(content_str, no_wrap=not self.word_wrap)
 
         except Exception as e:
             return Text(
@@ -876,10 +901,6 @@ class ContentViewer(Vertical):
 
             content_widget = self.query_one("#local-display", Static)
             content_widget.update(processed_content)
-
-            # コンテンツの行数に応じて高さを動的に設定
-            line_count = len(local_lines) if local_lines else 1
-            content_widget.styles.height = line_count + 2  # 少し余裕を持たせる
 
         except Exception as e:
             self._show_error_in_tab(

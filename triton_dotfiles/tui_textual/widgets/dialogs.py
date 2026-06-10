@@ -675,12 +675,21 @@ class OperationSuccessWithCommitDialog(ModalScreen[str]):
         align: center middle;
     }
 
+    /* 「次のアクションに進む」ダイアログ: 閉じるだけの情報ダイアログ
+       （solid $primary）と区別するため二重枠+successカラーにする */
     .dialog-container {
         width: 90;
         height: 30;
         background: $surface;
-        border: solid $primary;
+        border: double $success;
         padding: 1;
+    }
+
+    .dialog-key-hints {
+        height: 1;
+        width: 1fr;
+        text-align: center;
+        color: $text-muted;
     }
 
     .dialog-header {
@@ -748,6 +757,12 @@ class OperationSuccessWithCommitDialog(ModalScreen[str]):
                         )
                         yield Button("Dry Run", variant="default", id="dry-button")
                         yield Button("Close", variant="default", id="close-button")
+
+                    # Enterの意味がMessageDialog系（閉じる）と異なるため明示する
+                    yield Label(
+                        "Enter: Commit & Push   ·   D: Dry Run   ·   Esc: Close",
+                        classes="dialog-key-hints",
+                    )
 
     def on_mount(self) -> None:
         # コンテンツを結合

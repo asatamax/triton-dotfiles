@@ -2,6 +2,8 @@
 Main screen for the Textual TUI
 """
 
+import asyncio
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
@@ -170,8 +172,9 @@ class MainScreen(Static):
                 "• File browsing\n"
                 "• Diff view (d)\n"
                 "• Backup view (b)\n"
-                "• File restore (r)\n"
-                "• File export (e)\n\n"
+                "• Backup current machine (B)\n"
+                "• File restore (R)\n"
+                "• File export (x)\n\n"
                 "Use arrow keys to navigate\n"
                 "Press Space to select files\n"
                 "Press '?' for help"
@@ -411,13 +414,14 @@ class MainScreen(Static):
         await show_progress()
 
         try:
+            # 同期I/Oを別スレッドで実行（イベントループをブロックしない）
             if len(files) == 1:
-                result = self.file_adapter.restore_file(
-                    self.current_machine["id"], files[0]
+                result = await asyncio.to_thread(
+                    self.file_adapter.restore_file, self.current_machine["id"], files[0]
                 )
             else:
-                result = self.file_adapter.restore_files(
-                    self.current_machine["id"], files
+                result = await asyncio.to_thread(
+                    self.file_adapter.restore_files, self.current_machine["id"], files
                 )
 
             # プログレスダイアログを閉じる
@@ -516,9 +520,12 @@ class MainScreen(Static):
                 f"Starting export: machine_id={self.current_machine['id']}, files={[f['name'] for f in files]}, destination={destination_path}"
             )
 
-            # 実際のエクスポート処理
-            result = self.file_adapter.export_files_to_directory(
-                self.current_machine["id"], files, destination_path
+            # 実際のエクスポート処理（同期I/Oを別スレッドで実行）
+            result = await asyncio.to_thread(
+                self.file_adapter.export_files_to_directory,
+                self.current_machine["id"],
+                files,
+                destination_path,
             )
 
             # デバッグ情報
@@ -588,8 +595,10 @@ class MainScreen(Static):
         self.app.push_screen(progress_dialog)
 
         try:
-            # git pullを実行
-            result = self.file_adapter.git_pull_repository(dry_run=False)
+            # git pullを実行（同期I/Oを別スレッドで実行）
+            result = await asyncio.to_thread(
+                self.file_adapter.git_pull_repository, dry_run=False
+            )
 
             # プログレスダイアログを閉じる
             progress_dialog.dismiss()
@@ -904,8 +913,10 @@ class MainScreen(Static):
         self.app.push_screen(progress_dialog)
 
         try:
-            # バックアップを実行
-            result = self.file_adapter.backup_files_to_repository(dry_run=dry_run)
+            # バックアップを実行（同期I/Oを別スレッドで実行）
+            result = await asyncio.to_thread(
+                self.file_adapter.backup_files_to_repository, dry_run=dry_run
+            )
 
             # プログレスダイアログを閉じる
             progress_dialog.dismiss()
@@ -994,8 +1005,10 @@ class MainScreen(Static):
         self.app.push_screen(progress_dialog)
 
         try:
-            # git commit pushを実行
-            result = self.file_adapter.git_commit_push_repository(dry_run=dry_run)
+            # git commit pushを実行（同期I/Oを別スレッドで実行）
+            result = await asyncio.to_thread(
+                self.file_adapter.git_commit_push_repository, dry_run=dry_run
+            )
 
             # プログレスダイアログを閉じる
             progress_dialog.dismiss()
@@ -1117,10 +1130,12 @@ class MainScreen(Static):
         self.app.push_screen(progress_dialog)
 
         try:
-            # cleanup実行
+            # cleanup実行（同期I/Oを別スレッドで実行）
             current_machine = self.file_adapter.config_manager.get_machine_name()
-            result = self.file_adapter.cleanup_repository_files(
-                current_machine, dry_run=dry_run
+            result = await asyncio.to_thread(
+                self.file_adapter.cleanup_repository_files,
+                current_machine,
+                dry_run=dry_run,
             )
 
             # プログレスダイアログを閉じる
@@ -1246,8 +1261,10 @@ class MainScreen(Static):
             self.app.push_screen(progress_dialog)
 
             try:
-                # VSCode diff を開く
-                result = self.file_adapter.open_vscode_diff(current_file)
+                # VSCode diff を開く（復号・ファイルコピーを別スレッドで実行）
+                result = await asyncio.to_thread(
+                    self.file_adapter.open_vscode_diff, current_file
+                )
 
                 # プログレスダイアログを閉じる
                 self.app.pop_screen()
@@ -1298,8 +1315,10 @@ class MainScreen(Static):
             self.app.push_screen(progress_dialog)
 
             try:
-                # VSCodeでローカルファイルを編集
-                result = self.file_adapter.open_vscode_edit(current_file)
+                # VSCodeでローカルファイルを編集（起動処理を別スレッドで実行）
+                result = await asyncio.to_thread(
+                    self.file_adapter.open_vscode_edit, current_file
+                )
 
                 # プログレスダイアログを閉じる
                 self.app.pop_screen()
