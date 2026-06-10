@@ -260,22 +260,21 @@ class ContentViewer(Vertical):
 
     def on_mount(self) -> None:
         """Splitビューの左右スクロールを同期させる"""
+
+        def make_sync_callback(target: ScrollableContainer, attr: str):
+            # watch()はコールバックの引数個数を検査するため、
+            # デフォルト引数なしの1引数クロージャである必要がある
+            def on_scroll_changed(value: float) -> None:
+                self._sync_split_scroll(target, attr, value)
+
+            return on_scroll_changed
+
         try:
             left = self.query_one("#split-local-container", ScrollableContainer)
             right = self.query_one("#split-backup-container", ScrollableContainer)
             for attr in ("scroll_y", "scroll_x"):
-                self.watch(
-                    left,
-                    attr,
-                    lambda v, t=right, a=attr: self._sync_split_scroll(t, a, v),
-                    init=False,
-                )
-                self.watch(
-                    right,
-                    attr,
-                    lambda v, t=left, a=attr: self._sync_split_scroll(t, a, v),
-                    init=False,
-                )
+                self.watch(left, attr, make_sync_callback(right, attr), init=False)
+                self.watch(right, attr, make_sync_callback(left, attr), init=False)
         except Exception as e:
             self.log.error(f"Failed to set up split scroll sync: {e}")
 
