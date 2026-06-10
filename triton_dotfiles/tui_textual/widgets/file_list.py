@@ -2,8 +2,8 @@
 File list widget for the Textual TUI
 """
 
-from textual.widgets import ListView, ListItem, Label, Input, Checkbox
-from textual.containers import Vertical, Horizontal
+from textual.widgets import ListView, ListItem, Label, Input
+from textual.containers import Vertical
 from textual.message import Message
 from textual.binding import Binding
 from textual.fuzzy import Matcher
@@ -192,20 +192,15 @@ class FileListItem(ListItem):
                 self.add_class("changed")
 
     def compose(self):
-        """アイテムの構成"""
-        with Horizontal():
-            # チェックボックス（ラベルなしでコンパクト）
-            checkbox = Checkbox("", self._selected, id=f"checkbox-{self.index}")
-            checkbox.styles.width = 3  # 固定幅を3に変更
-            checkbox.styles.height = 1
-            checkbox.styles.margin = (0, 1, 0, 0)
-            checkbox.can_focus = False  # フォーカスを無効化してListViewとの競合を防ぐ
-            yield checkbox
+        """アイテムの構成
 
-            # ファイル名のラベル
-            self.file_label = Label("")
-            self.file_label.styles.width = "auto"  # 内容に応じてサイズを調整
-            yield self.file_label
+        選択マーカー+アイコン+ファイル名を単一Labelで描画する。
+        行ごとのCheckboxウィジェットは数百ファイルで描画負荷が高いため
+        テキストマーカー（[x]）方式に統一。
+        """
+        self.file_label = Label("")
+        self.file_label.styles.width = "auto"  # 内容に応じてサイズを調整
+        yield self.file_label
 
     def on_mount(self) -> None:
         """マウント時に表示を更新"""
@@ -223,7 +218,7 @@ class FileListItem(ListItem):
         # 親コンテナの幅を取得
         parent_width = self.parent.size.width if self.parent else 50
 
-        # 利用可能幅を計算（チェックボックス3 + マージン1 + パディング2 + スクロールバー1を除く）
+        # 利用可能幅を計算（マーカー4 + パディング2 + スクロールバー1を除く）
         # 拡張子が切れる問題を解決するため、3文字分の余裕を追加
         available_width = max(20, parent_width - 10)
 
@@ -242,6 +237,10 @@ class FileListItem(ListItem):
 
         # リッチテキスト作成
         text = Text()
+        if self._selected:
+            text.append("[x] ", style="bold green")
+        else:
+            text.append("[ ] ", style="dim")
         text.append(f"{icon} ")
         text.append(shortened_filename)
 
@@ -250,7 +249,7 @@ class FileListItem(ListItem):
     def toggle_selection(self):
         """選択状態をトグル"""
         self._selected = not self._selected
-        self.refresh(recompose=True)
+        self.update_display()
         return self._selected
 
 
@@ -296,11 +295,7 @@ class FileList(Vertical):
         padding: 0 1;
         width: auto;
     }
-    
-    FileList ListItem Horizontal {
-        width: auto;
-    }
-    
+
     FileList ListItem Label {
         width: auto;
         text-overflow: clip;
@@ -340,35 +335,13 @@ class FileList(Vertical):
         padding: 0 1;
         text-align: center;
     }
-    
-    /* Checkboxのスタイル */
-    FileList Checkbox {
-        width: 3;
-        height: 1;
-        margin: 0 1 0 0;
-        /*background: transparent;*/
-        border: none;
-        padding: 0;
-    }
-    
-    FileList Checkbox.-on {
-        color: $success;
-    }
-    
-    FileList Checkbox > .checkbox--switch {
-        background: $panel;
-        color: $text;
-    }
-    
-    FileList Checkbox.-on > .checkbox--switch {
-        background: $success;
-    }
     """
 
     def __init__(self, file_adapter=None):
         super().__init__()
         self.files: List[Dict] = []
         self.filtered_files: List[Dict] = []  # フィルタ後のファイルリスト
+        self._index_by_id: Dict[int, int] = {}  # id(file_info) → files内インデックス
         self.selected_files: Set[int] = set()
         self.current_machine: str = ""
         self.file_adapter = file_adapter
@@ -384,38 +357,6 @@ class FileList(Vertical):
         for item in self.list_view.children:
             if isinstance(item, FileListItem) and hasattr(item, "update_display"):
                 item.update_display()
-
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        """チェックボックスの状態変更時の処理"""
-        # チェックボックスのIDからインデックスを取得
-        checkbox_id = event.checkbox.id
-        if checkbox_id and checkbox_id.startswith("checkbox-"):
-            try:
-                index = int(checkbox_id.replace("checkbox-", ""))
-                # ファイル選択状態を更新
-                if event.value:
-                    self.selected_files.add(index)
-                else:
-                    self.selected_files.discard(index)
-
-                # ヘッダーを更新
-                self._update_header()
-
-                # ListItemの選択状態も更新（視覚的フィードバック）
-                for item in self.list_view.children:
-                    if isinstance(item, FileListItem) and item.index == index:
-                        item._selected = event.value
-                        # チェックボックスの表示を更新
-                        checkbox = item.query_one(f"#checkbox-{index}", Checkbox)
-                        if checkbox.value != event.value:
-                            checkbox.value = event.value
-                        break
-
-                # イベントを停止して他のハンドラーの実行を防ぐ
-                event.stop()
-
-            except ValueError:
-                pass
 
     def _update_header(self):
         """ヘッダー情報を更新"""
@@ -459,6 +400,8 @@ class FileList(Vertical):
         self.current_machine = machine_name
         self.files = files
         self.filtered_files = files.copy()  # 初期状態は全ファイル表示
+        # files.index()のO(n²)を避けるためインデックスを事前構築
+        self._index_by_id = {id(f): i for i, f in enumerate(files)}
         self.selected_files.clear()
         self.filter_query = ""
         self.filter_input.value = ""  # フィルタをクリア
@@ -567,7 +510,7 @@ class FileList(Vertical):
 
                 # targetに属するファイルを追加
                 for file_info in target_files:
-                    original_index = self.files.index(file_info)
+                    original_index = self._index_by_id[id(file_info)]
                     is_selected = original_index in self.selected_files
                     item = FileListItem(file_info, original_index, is_selected)
                     self.list_view.append(item)
@@ -584,7 +527,7 @@ class FileList(Vertical):
             # 通常表示（dividerなし）
             for file_info in self.filtered_files:
                 # 元のインデックスを保持（選択状態の管理のため）
-                original_index = self.files.index(file_info)
+                original_index = self._index_by_id[id(file_info)]
                 is_selected = original_index in self.selected_files
                 item = FileListItem(file_info, original_index, is_selected)
                 self.list_view.append(item)
@@ -648,17 +591,11 @@ class FileList(Vertical):
             else:
                 self.selected_files.discard(index)
 
-            # ListItemとCheckboxの表示を更新
+            # ListItemの表示を更新
             for item in self.list_view.children:
                 if isinstance(item, FileListItem) and item.index == index:
                     item._selected = new_state
-                    # チェックボックスを探して更新
-                    try:
-                        checkbox = item.query_one(f"#checkbox-{index}", Checkbox)
-                        checkbox.value = new_state
-                    except Exception:
-                        # チェックボックスが見つからない場合は再構成
-                        item.refresh(recompose=True)
+                    item.update_display()
                     break
 
             # ヘッダーを更新
@@ -673,8 +610,7 @@ class FileList(Vertical):
     def select_all(self) -> None:
         """すべてのファイルを選択（フィルタ中は表示されているファイルのみ）"""
         for file_info in self.filtered_files:
-            original_index = self.files.index(file_info)
-            self.selected_files.add(original_index)
+            self.selected_files.add(self._index_by_id[id(file_info)])
         self._update_list_view()
 
     def deselect_all(self) -> None:

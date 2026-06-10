@@ -193,8 +193,14 @@ class TritonTUIApp(App):
 
             # StartupScreenを削除（既に非表示なので見た目には影響しない）
             await startup_screen.remove()
-        except Exception:
-            pass
+        except Exception as e:
+            # ここで握りつぶすと真っ白な画面のまま固まるため、必ず可視化する
+            self.log.error(f"Failed to switch to main screen: {e}")
+            self.notify(
+                f"Startup failed: {e}. Press q to quit and check the config.",
+                severity="error",
+                timeout=30,
+            )
 
     def on_mount(self) -> None:
         """アプリケーション起動時の初期化"""
