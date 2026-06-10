@@ -191,8 +191,9 @@ Select mode swaps the rich preview for a read-only TextArea so the user can mous
 
 ### Selection
 
-- Checkbox checked - File selected for batch operations
-- Checkbox empty - File not selected
+- `[x]` marker - File selected for batch operations
+- `[ ]` marker - File not selected
+- `Space` toggles the highlighted file, `A` deselects all
 
 ### Repository Drift Indicator
 

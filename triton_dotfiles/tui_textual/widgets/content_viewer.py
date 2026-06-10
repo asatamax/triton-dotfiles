@@ -180,6 +180,7 @@ class ContentViewer(Vertical):
         self.file_adapter = None
         self._tabbed_content: Optional[TabbedContent] = None
         self.word_wrap: bool = True
+        self._split_sync_guard: bool = False
 
     def compose(self) -> ComposeResult:
         """タブ構成の定義"""
@@ -257,6 +258,37 @@ class ContentViewer(Vertical):
         "split-backup-display",
     )
 
+    def on_mount(self) -> None:
+        """Splitビューの左右スクロールを同期させる"""
+        try:
+            left = self.query_one("#split-local-container", ScrollableContainer)
+            right = self.query_one("#split-backup-container", ScrollableContainer)
+            for attr in ("scroll_y", "scroll_x"):
+                self.watch(
+                    left,
+                    attr,
+                    lambda v, t=right, a=attr: self._sync_split_scroll(t, a, v),
+                    init=False,
+                )
+                self.watch(
+                    right,
+                    attr,
+                    lambda v, t=left, a=attr: self._sync_split_scroll(t, a, v),
+                    init=False,
+                )
+        except Exception as e:
+            self.log.error(f"Failed to set up split scroll sync: {e}")
+
+    def _sync_split_scroll(self, target, attr: str, value: float) -> None:
+        """片側のスクロールを反対側へ反映（再帰防止ガード付き）"""
+        if self._split_sync_guard:
+            return
+        self._split_sync_guard = True
+        try:
+            setattr(target, attr, value)
+        finally:
+            self._split_sync_guard = False
+
     def set_file_adapter(self, adapter):
         """file_adapterを設定"""
         self.file_adapter = adapter
@@ -321,9 +353,8 @@ class ContentViewer(Vertical):
                 if self.current_file:
                     self._update_active_tab_content()
                 self.post_message(ViewModeChanged(mode))
-            except Exception:
-                # それでも失敗する場合はログに記録して無視
-                pass
+            except Exception as e:
+                self.log.error(f"Failed to set view mode '{mode}': {e}")
 
     def update_content(self, file_info: Dict, machine_id: str):
         """コンテンツを更新（全タブ対応）"""
@@ -385,9 +416,9 @@ class ContentViewer(Vertical):
                 self._show_info(self.current_file)
             elif active_tab == "split":
                 self._show_split_view(self.current_file, self.current_machine)
-        except Exception:
-            # タブがまだ利用できない場合は無視
-            pass
+        except Exception as e:
+            # 起動直後はタブ未初期化で失敗し得るためエラーにはしない
+            self.log.debug(f"Tab content update skipped: {e}")
 
     def on_tabbed_content_tab_activated(
         self, event: TabbedContent.TabActivated
@@ -1135,14 +1166,3 @@ class ContentViewer(Vertical):
             return "bash"
 
         return None
-
-    def add_future_tab(
-        self, tab_id: str, title: str, initial_message: Optional[str] = None
-    ) -> None:
-        """将来のタブ追加用メソッド（拡張性対応）"""
-        if initial_message is None:
-            initial_message = f"Select a file to view {title.lower()} content"
-
-        # 新しいTabPaneを動的に追加（実装時に調整が必要）
-        # 注意: Textualでは動的なタブ追加は複雑なため、
-        # 実際の5つ目のタブ実装時はcomposeメソッドを直接修正することを推奨

@@ -2,7 +2,7 @@
 Dialog widgets for the Textual TUI
 """
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -186,23 +186,45 @@ class ConfirmationDialog(BaseDialog):
 
 
 class InputDialog(BaseDialog):
-    """入力ダイアログ"""
+    """入力ダイアログ
+
+    Args:
+        title: ダイアログタイトル
+        prompt: 入力欄の上に表示する説明
+        default_value: 入力欄の初期値
+        live_validator: 入力値を受け取りステータス表示用のTextを返す
+            callable。指定すると入力欄の下に検証結果をライブ表示する
+            （パス入力の存在チェック等）。
+    """
 
     DEFAULT_CSS = """
     InputDialog .dialog-container {
-        width: 60;
+        width: 70;
     }
 
     InputDialog .dialog-input {
         margin: 1 0;
     }
+
+    InputDialog .input-status {
+        height: auto;
+        width: 1fr;
+        margin: 0 0 1 0;
+    }
     """
 
-    def __init__(self, title: str, prompt: str, default_value: str = ""):
+    def __init__(
+        self,
+        title: str,
+        prompt: str,
+        default_value: str = "",
+        live_validator: Optional[Callable[[str], Text]] = None,
+    ):
         super().__init__()
         self.title = title
         self.prompt = prompt
         self.default_value = default_value
+        self.live_validator = live_validator
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -215,6 +237,8 @@ class InputDialog(BaseDialog):
                             value=self.default_value, classes="dialog-input"
                         )
                         yield self.input_field
+                        if self.live_validator:
+                            yield Static("", id="input-status", classes="input-status")
 
                     with Horizontal(classes="dialog-buttons"):
                         yield Button("OK", variant="primary", id="ok-button")
@@ -222,6 +246,19 @@ class InputDialog(BaseDialog):
 
     def on_mount(self) -> None:
         self.input_field.focus()
+        self._update_validation(self.default_value)
+
+    def _update_validation(self, value: str) -> None:
+        if not self.live_validator:
+            return
+        try:
+            status = self.live_validator(value)
+            self.query_one("#input-status", Static).update(status)
+        except Exception as e:
+            self.log.error(f"Input validation failed: {e}")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._update_validation(event.value)
 
     def _submit_value(self, raw_value: str) -> None:
         value = raw_value.strip()

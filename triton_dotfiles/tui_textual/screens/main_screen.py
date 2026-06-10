@@ -3,7 +3,9 @@ Main screen for the Textual TUI
 """
 
 import asyncio
+import os
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
@@ -420,15 +422,44 @@ class MainScreen(Static):
         else:
             prompt = f"Please enter export directory for {file_count} selected files:"
 
-        # Callbackパターンでダイアログを表示
+        # Callbackパターンでダイアログを表示（パスの状態をライブ表示）
         self.app.push_screen(
-            InputDialog("Export Directory", prompt, "exported_files"),
+            InputDialog(
+                "Export Directory",
+                prompt,
+                self._default_export_directory(),
+                live_validator=self._export_path_status,
+            ),
             self._handle_export_directory_input,
         )
 
         # target_filesを一時保存（callbackで使用）
         self._pending_export_files = target_files
         self._pending_export_file_count = file_count
+
+    @staticmethod
+    def _default_export_directory() -> str:
+        """エクスポート先のデフォルト値（Desktopがあれば優先）"""
+        if os.path.isdir(os.path.expanduser("~/Desktop")):
+            return "~/Desktop/triton-export"
+        return "~/triton-export"
+
+    @staticmethod
+    def _export_path_status(raw: str) -> Text:
+        """エクスポート先パスの状態をライブ検証して返す"""
+        value = raw.strip()
+        if not value:
+            return Text("Enter a directory path", style="dim")
+
+        path = os.path.abspath(os.path.expanduser(value))
+        if os.path.isdir(path):
+            return Text(f"✓ {path} (existing directory)", style="green")
+        if os.path.exists(path):
+            return Text(f"✗ {path} exists and is not a directory", style="red")
+        parent = os.path.dirname(path)
+        if os.path.isdir(parent):
+            return Text(f"+ {path} (will be created)", style="yellow")
+        return Text(f"✗ Parent directory missing: {parent}", style="red")
 
     async def _perform_restore(self, files):
         """復元を実行"""

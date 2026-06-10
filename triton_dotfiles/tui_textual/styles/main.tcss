@@ -111,18 +111,6 @@ Button.-secondary {
     color: $text;
 }
 
-/* チェックボックス */
-Checkbox {
-    width: 3;
-    height: 1;
-    background: transparent;
-    padding: 0;
-}
-
-Checkbox:focus {
-    background: $primary 20%;
-}
-
 /* 入力フィールド */
 Input {
     margin: 1 0;
