@@ -123,18 +123,15 @@ class TritonTUIApp(App):
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit"),
         Binding("?", "show_help", "Help"),
-        # ナビゲーション
-        Binding("left", "focus_left", "Focus Left"),
-        Binding("right", "focus_right", "Focus Right"),
         # ファイル操作
         Binding("space", "toggle_selection", "Toggle"),
-        Binding("enter", "select_file", "Select"),
         # 表示モード
         Binding("b", "toggle_backup", "Backup View"),
         Binding("l", "toggle_local", "Local"),
         Binding("d", "toggle_diff", "Diff"),
         Binding("i", "toggle_info", "Info"),
         Binding("s", "toggle_split", "Split"),
+        Binding("w", "toggle_wrap", "Wrap", show=False),
         # 数字キーでタブ切り替え（フッターには表示しない）
         Binding("1", "toggle_backup", "Tab 1", show=False),
         Binding("2", "toggle_local", "Tab 2", show=False),
@@ -254,16 +251,15 @@ class TritonTUIApp(App):
 
         section("Navigation")
         key_line("↑/↓", "Move up/down in file list")
-        key_line("←", "Focus left pane")
-        key_line("→", "Focus right pane")
 
         section("File Operations")
         key_line("Space", "Toggle file selection")
-        key_line("Enter", "Select/view file")
         key_line("R", "Restore selected files")
         key_line("x", "Export selected files")
         key_line("B", "Backup current machine")
         key_line("/", "Filter files")
+        key_line("-", "Group files by target")
+        key_line(".", "Show changed files only")
 
         section("View Modes")
         key_line("b", "Backup view")
@@ -272,6 +268,7 @@ class TritonTUIApp(App):
         key_line("i", "File info view")
         key_line("s", "Split view (Local + Backup)")
         key_line("1-5", "Quick tab switching")
+        key_line("w", "Toggle word wrap (horizontal scroll when off)")
 
         section("Clipboard")
         key_line("c / y", "Copy (selection if any, otherwise full content)")
@@ -333,6 +330,11 @@ class TritonTUIApp(App):
         """スプリット表示モードに切り替え"""
         main_screen = self.query_one(MainScreen)
         main_screen.set_view_mode("split")
+
+    def action_toggle_wrap(self) -> None:
+        """プレビューのword wrapを切り替え"""
+        main_screen = self.query_one(MainScreen)
+        main_screen.content_viewer.toggle_word_wrap()
 
     def action_toggle_left_pane(self) -> None:
         """左ペインの表示/非表示を切り替え"""

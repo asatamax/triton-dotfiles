@@ -2,7 +2,10 @@
 File operations adapter for TUI
 """
 
+import atexit
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from colorama import Fore, Style
 from ...managers.file_comparison_manager import (
@@ -10,9 +13,38 @@ from ...managers.file_comparison_manager import (
     DuplicateDetectionMethod,
 )
 
+# VSCode diff用一時ディレクトリの管理
+# 復号済みコンテンツ（SSH鍵等）を含むため、確実に削除する必要がある
+_TEMP_DIFF_PREFIX = "triton_diff_"
+_temp_diff_dirs: list[str] = []
+
+
+def _cleanup_temp_diff_dirs() -> None:
+    """このプロセスが作成した復号済み一時ディレクトリを削除"""
+    while _temp_diff_dirs:
+        shutil.rmtree(_temp_diff_dirs.pop(), ignore_errors=True)
+
+
+atexit.register(_cleanup_temp_diff_dirs)
+
+
+def _sweep_stale_diff_dirs() -> None:
+    """過去セッションの一時ディレクトリ残骸を掃除
+
+    異常終了等でatexitが走らなかった場合、復号済み秘密情報が
+    /tmpに残り続けるため、起動時に必ず一掃する。
+    """
+    tmp_root = Path(tempfile.gettempdir())
+    for stale_dir in tmp_root.glob(f"{_TEMP_DIFF_PREFIX}*"):
+        if stale_dir.is_dir() and str(stale_dir) not in _temp_diff_dirs:
+            shutil.rmtree(stale_dir, ignore_errors=True)
+
 
 class TUIFileAdapter:
     """既存のFileManagerをTUI用にラップするアダプター"""
+
+    # VSCode系エディタの検出候補（優先順）
+    EDITOR_COMMANDS = ("code", "code-insiders", "cursor", "windsurf")
 
     def __init__(self):
         # 既存クラスを遅延インポート（循環インポート回避）
@@ -35,6 +67,9 @@ class TUIFileAdapter:
         self.file_comparison_manager = FileComparisonManager(
             self.file_manager.encryption_manager
         )
+
+        # 過去セッションの復号済み一時ファイルを掃除（セキュリティ）
+        _sweep_stale_diff_dirs()
 
     def get_repository_path(self):
         """リポジトリパスを取得"""
@@ -76,6 +111,17 @@ class TUIFileAdapter:
             return self.config_manager.get_machine_name()
         except Exception:
             return None
+
+    def _find_editor_command(self) -> str | None:
+        """PATHから利用可能なVSCode系エディタコマンドを探す
+
+        `--version`の実行（1コマンドあたり最大数秒かかる）は行わず、
+        whichベースの存在チェックのみで判定する。
+        """
+        for cmd in self.EDITOR_COMMANDS:
+            if shutil.which(cmd):
+                return cmd
+        return None
 
     def get_available_machines(self):
         """利用可能なマシン一覧を取得"""
@@ -509,14 +555,16 @@ class TUIFileAdapter:
                 }
 
             # 差分を生成
+            # backup→localの方向: ローカルでの追記が「+」（緑）になり、
+            # Infoタブの AHEAD（ローカルが新しい）の意味論と一致する
             import difflib
 
             diff_lines = list(
                 difflib.unified_diff(
-                    local_lines,
                     backup_lines,
-                    fromfile=f"local/{file_info['name']}",
-                    tofile=f"backup/{file_info['name']}",
+                    local_lines,
+                    fromfile=f"backup/{file_info['name']}",
+                    tofile=f"local/{file_info['name']}",
                     lineterm="",
                 )
             )
@@ -841,28 +889,14 @@ class TUIFileAdapter:
         self, machine_name: str = None, dry_run: bool = False
     ):
         """現在のマシンのファイルをバックアップ"""
-        import io
-        import sys
-
         try:
             # マシン名が指定されていない場合は設定から取得
             if not machine_name:
                 machine_name = self.config_manager.get_machine_name()
 
-            # 標準出力をキャプチャ
-            captured_output = io.StringIO()
-            original_stdout = sys.stdout
-            sys.stdout = captured_output
-
-            try:
-                # 既存のbackup機能を使用
-                result = self.file_manager.backup_files(machine_name, dry_run=dry_run)
-            finally:
-                # 標準出力を元に戻す
-                sys.stdout = original_stdout
-
-            # キャプチャした出力を取得
-            console_output = captured_output.getvalue()
+            # backup_filesのprint出力はTextualのstdoutキャプチャに吸収される。
+            # 表示には構造化されたresultのみを使用する（スレッド安全・重複表示防止）
+            result = self.file_manager.backup_files(machine_name, dry_run=dry_run)
 
             # 結果を統合
             success_count = len(result.get("copied", []))
@@ -882,15 +916,8 @@ class TUIFileAdapter:
                     msg += f", {cleaned_count} stale cleaned"
                 message = msg
 
-            # 詳細情報を追加（CLIの出力 + ファイルリスト）
+            # 詳細情報（構造化resultから構築、colorama色付き）
             details = []
-
-            # コンソール出力を追加（ANSIコードを保持 - RichLogで表示）
-            if console_output.strip():
-                details.append(console_output.strip())
-                details.append("")
-
-            # ファイルリストを詳細表示（colorama色付き）
             if result.get("copied"):
                 header = "Files that would be copied:" if dry_run else "Files copied:"
                 details.append(f"{Fore.CYAN}{header}{Style.RESET_ALL}")
@@ -920,15 +947,6 @@ class TUIFileAdapter:
                 for error in result["errors"]:
                     details.append(f"  {Fore.RED}✗{Style.RESET_ALL} {error}")
                 details.append("")
-
-            # nextステップの提案（dry_runでないときのみ）
-            if not dry_run and success_count > 0:
-                details.append(f"{Fore.CYAN}Next steps:{Style.RESET_ALL}")
-                details.append(f"  git add {machine_name}/")
-                details.append(
-                    f'  git commit -m "backup({machine_name}): $(date +%Y-%m-%d)"'
-                )
-                details.append("  git push")
 
             return {
                 "success": error_count == 0,
@@ -1123,9 +1141,6 @@ class TUIFileAdapter:
     def open_vscode_diff(self, file_info):
         """VSCodeでlocal vs databaseファイルの差分を表示"""
         import subprocess
-        import tempfile
-        import os
-        import shutil
 
         try:
             # ローカル専用ファイルの場合は特別な処理
@@ -1144,24 +1159,7 @@ class TUIFileAdapter:
                     "message": f"Local file does not exist: {local_path}",
                 }
 
-            # VSCodeコマンドの存在確認
-            vscode_commands = ["code", "code-insiders", "cursor", "windsurf"]
-            vscode_cmd = None
-
-            for cmd in vscode_commands:
-                try:
-                    subprocess.run(
-                        [cmd, "--version"], capture_output=True, check=True, timeout=5
-                    )
-                    vscode_cmd = cmd
-                    break
-                except (
-                    subprocess.CalledProcessError,
-                    subprocess.TimeoutExpired,
-                    FileNotFoundError,
-                ):
-                    continue
-
+            vscode_cmd = self._find_editor_command()
             if not vscode_cmd:
                 return {
                     "success": False,
@@ -1169,7 +1167,9 @@ class TUIFileAdapter:
                 }
 
             # 一時ファイルを作成してdatabase版をエクスポート
-            temp_dir = tempfile.mkdtemp(prefix="triton_diff_")
+            # 復号済みコンテンツを含み得るためTUI終了時にatexitで削除される
+            temp_dir = tempfile.mkdtemp(prefix=_TEMP_DIFF_PREFIX)
+            _temp_diff_dirs.append(temp_dir)
 
             # ファイル名から安全な一時ファイル名を作成
             safe_filename = (
@@ -1191,7 +1191,7 @@ class TUIFileAdapter:
                     with open(temp_db_file, "wb") as f:
                         f.write(decrypted_content)
                 except Exception as e:
-                    shutil.rmtree(temp_dir)
+                    shutil.rmtree(temp_dir, ignore_errors=True)
                     return {
                         "success": False,
                         "message": f"Error decrypting database file: {str(e)}",
@@ -1201,11 +1201,14 @@ class TUIFileAdapter:
                 try:
                     shutil.copy2(backup_file_path, temp_db_file)
                 except Exception as e:
-                    shutil.rmtree(temp_dir)
+                    shutil.rmtree(temp_dir, ignore_errors=True)
                     return {
                         "success": False,
                         "message": f"Error copying database file: {str(e)}",
                     }
+
+            # 復号済みコンテンツを含み得るため所有者のみ読み書き可に制限
+            os.chmod(temp_db_file, 0o600)
 
             # VSCode diff起動
             try:
@@ -1221,9 +1224,8 @@ class TUIFileAdapter:
                     stderr=subprocess.DEVNULL,
                 )
 
-                # 注意: 一時ファイルはVSCodeが開いている間は削除しない
-                # TODO: より良いクリーンアップ機構が必要
-
+                # 一時ファイルはVSCodeが開いている間は残し、
+                # TUI終了時（atexit）と次回起動時のsweepで削除される
                 return {
                     "success": True,
                     "message": f"Opened {file_info['name']} in VSCode diff view",
@@ -1232,7 +1234,7 @@ class TUIFileAdapter:
                 }
 
             except Exception as e:
-                shutil.rmtree(temp_dir)
+                shutil.rmtree(temp_dir, ignore_errors=True)
                 return {
                     "success": False,
                     "message": f"Error launching VSCode: {str(e)}",
@@ -1244,7 +1246,6 @@ class TUIFileAdapter:
     def open_vscode_edit(self, file_info):
         """VSCodeでローカルファイルを直接編集"""
         import subprocess
-        import os
 
         try:
             local_path = file_info["local_path"]
@@ -1256,24 +1257,7 @@ class TUIFileAdapter:
                     "message": f"Local file does not exist: {local_path}",
                 }
 
-            # VSCodeコマンドの存在確認（既存のロジックを再利用）
-            vscode_commands = ["code", "code-insiders", "cursor", "windsurf"]
-            vscode_cmd = None
-
-            for cmd in vscode_commands:
-                try:
-                    subprocess.run(
-                        [cmd, "--version"], capture_output=True, check=True, timeout=5
-                    )
-                    vscode_cmd = cmd
-                    break
-                except (
-                    subprocess.CalledProcessError,
-                    subprocess.TimeoutExpired,
-                    FileNotFoundError,
-                ):
-                    continue
-
+            vscode_cmd = self._find_editor_command()
             if not vscode_cmd:
                 return {
                     "success": False,
