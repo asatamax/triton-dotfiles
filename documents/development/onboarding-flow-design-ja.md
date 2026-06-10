@@ -305,7 +305,7 @@ P4の対策。`_load_initial_data()`の挙動を以下に変更する:
 │   No backups yet for this machine.                  │
 │                                                     │
 │   B          Create your first backup               │
-│   ← / →      Browse other machines to restore from  │
+│   m          Select another machine to restore from │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```
