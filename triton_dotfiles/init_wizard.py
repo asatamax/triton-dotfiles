@@ -15,6 +15,7 @@ import click
 from colorama import Fore, Style
 
 from .utils import get_triton_dir, import_class_from_module
+from .wizard_common import prompt_valid_path, update_config_repository_settings
 
 create_default_config = import_class_from_module("config", "create_default_config")
 create_encryption_key = import_class_from_module("encryption", "create_encryption_key")
@@ -506,40 +507,8 @@ class InitWizard:
     def _prompt_valid_path(
         self, prompt_text: str, default: Optional[str] = None
     ) -> Path:
-        """Prompt for a valid file path with validation.
-
-        Validates that the input looks like a path (contains / or ~)
-        to prevent accidental numeric input from being used as a path.
-        """
-        while True:
-            if default:
-                path_str = click.prompt(prompt_text, default=default)
-            else:
-                path_str = click.prompt(prompt_text)
-
-            # Check if input looks like a valid path
-            path_str = path_str.strip()
-            if not path_str:
-                click.echo(
-                    f"  {Fore.YELLOW}Please enter a valid path.{Style.RESET_ALL}"
-                )
-                continue
-
-            # Reject pure numeric input (likely accidental from previous prompt)
-            if path_str.isdigit():
-                click.echo(
-                    f"  {Fore.YELLOW}Invalid path: '{path_str}'. Please enter a directory path.{Style.RESET_ALL}"
-                )
-                continue
-
-            # Path should contain / or start with ~
-            if "/" not in path_str and not path_str.startswith("~"):
-                click.echo(
-                    f"  {Fore.YELLOW}Invalid path format. Use absolute path (/) or home-relative path (~/).{Style.RESET_ALL}"
-                )
-                continue
-
-            return Path(path_str).expanduser()
+        """Prompt for a valid file path with validation."""
+        return prompt_valid_path(prompt_text, default)
 
     def _setup_vault_directory(self, vault_path: Path) -> bool:
         """Set up vault directory with Git initialization."""
@@ -802,38 +771,16 @@ class InitWizard:
 
     def _update_config_settings(self, config_path: Path) -> None:
         """Update config.yml with wizard results (vault path, machine name)."""
+        update_config_repository_settings(
+            config_path,
+            vault_path=self.result.vault_path,
+            machine_name=self.result.machine_name,
+        )
+
         try:
-            content = config_path.read_text()
-            home = str(Path.home())
-
-            # Update vault path if set
-            if self.result.vault_path:
-                vault_path_str = str(self.result.vault_path)
-                if vault_path_str.startswith(home):
-                    vault_path_str = "~" + vault_path_str[len(home) :]
-                content = content.replace(
-                    "path: ~/dotfiles-repo",
-                    f"path: {vault_path_str}",
-                )
-
-            # Update machine name if custom name was set
-            if self.result.machine_name:
-                from .config import get_machine_name_unified
-
-                auto_name = get_machine_name_unified(use_hostname=True)
-                if self.result.machine_name != auto_name:
-                    # Custom name was set - add machine_name to config
-                    # Find the repository section and add machine_name after use_hostname
-                    import re
-
-                    # Pattern to find use_hostname line in repository section
-                    pattern = r"(repository:\s*\n(?:.*\n)*?\s*use_hostname:\s*true)"
-                    replacement = r"\1\n    machine_name: " + self.result.machine_name
-                    content = re.sub(pattern, replacement, content)
-
             # Add selected targets that are not in template
+            content = config_path.read_text()
             content = self._add_selected_targets_to_config(content)
-
             config_path.write_text(content)
         except Exception:
             pass  # Non-critical, user can edit manually

@@ -279,6 +279,27 @@ class FileManager:
         """バックアップディレクトリのパスを取得"""
         return self.repo_root / machine_name
 
+    def ensure_machine_backup_dir(self, machine_name: str) -> Optional[Path]:
+        """自マシンのバックアップディレクトリを確保する。
+
+        リポジトリが存在する場合のみ、マシンフォルダを作成する
+        （リポジトリ自体の作成はinit/joinの責務であり、ここでは行わない）。
+        参加直後のマシンがTUIのマシン一覧に必ず現れるようにするための処理。
+
+        Args:
+            machine_name: マシン名。
+
+        Returns:
+            作成（または既存確認）したディレクトリのPath。
+            リポジトリが存在しない場合はNone。
+        """
+        if not self.repo_root.exists():
+            return None
+
+        backup_dir = self.get_backup_dir(machine_name)
+        backup_dir.mkdir(exist_ok=True)
+        return backup_dir
+
     def is_machine_directory(self, directory: Path) -> bool:
         """ディレクトリがマシンディレクトリかどうかを判定"""
         # ドットで始まる = システムディレクトリ

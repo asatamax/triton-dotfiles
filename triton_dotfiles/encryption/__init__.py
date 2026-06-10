@@ -79,10 +79,68 @@ def create_encryption_key(
     return str(key_path)
 
 
+def verify_key_against_repository(
+    key_file: Union[str, Path],
+    repo_path: Union[str, Path],
+) -> dict:
+    """
+    Verify that an encryption key can decrypt files in a repository.
+
+    Picks the first ``.enc`` file found in the repository and attempts a
+    test decryption. This detects key mismatches (e.g. a master.key from a
+    different vault) before any restore operation is attempted.
+
+    Args:
+        key_file: Path to the master.key file.
+        repo_path: Path to the vault repository root.
+
+    Returns:
+        Dictionary with verification results:
+        - verified: True if a test decryption succeeded.
+        - skipped: True if verification could not run (no key / no .enc files).
+        - tested_file: Path of the .enc file used for the test, if any.
+        - error: Failure reason when verified is False.
+    """
+    result = {"verified": False, "skipped": False, "tested_file": None, "error": None}
+
+    key_path = Path(key_file)
+    if not key_path.exists():
+        result["skipped"] = True
+        result["error"] = f"Key file not found: {key_path}"
+        return result
+
+    repo_root = Path(repo_path)
+    if not repo_root.exists():
+        result["skipped"] = True
+        result["error"] = f"Repository not found: {repo_root}"
+        return result
+
+    encrypted_file = next(
+        (f for f in repo_root.rglob("*.enc") if f.is_file()),
+        None,
+    )
+    if encrypted_file is None:
+        result["skipped"] = True
+        result["error"] = "No encrypted files found in repository"
+        return result
+
+    result["tested_file"] = str(encrypted_file)
+
+    try:
+        manager = get_encryption_manager(key_path)
+        manager.decrypt_file_content(encrypted_file)
+        result["verified"] = True
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 # 公開インターフェース
 __all__ = [
     "get_encryption_manager",
     "create_encryption_key",
+    "verify_key_against_repository",
     "EncryptionManager",
     "DummyEncryptionManager",
     "CRYPTOGRAPHY_AVAILABLE",
