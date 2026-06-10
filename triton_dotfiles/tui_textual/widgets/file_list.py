@@ -261,6 +261,8 @@ class FileList(Vertical):
         Binding("-", "toggle_dividers", "Toggle Dividers", show=False),
         Binding(".", "toggle_changed_filter", "Changed Only", show=False),
         Binding("A", "deselect_all", "Deselect All", show=False),
+        Binding(">", "expand_selection", "Expand Select", show=False),
+        Binding("<", "shrink_selection", "Shrink Select", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -348,6 +350,11 @@ class FileList(Vertical):
         self.filter_query: str = ""  # 現在のフィルタクエリ
         self.show_dividers: bool = False  # targetごとのdivider表示フラグ
         self.show_changed_only: bool = False  # 変更ファイルのみ表示フラグ
+        # 拡大選択（>/<）のシーケンス状態
+        self._expand_anchor: Optional[str] = None
+        self._expand_anchor_index: int = -1
+        self._expand_level: int = 0
+        self._expand_base: Set[int] = set()
         # フォーカス可能にする
         self.can_focus = True
 
@@ -405,6 +412,7 @@ class FileList(Vertical):
         self.selected_files.clear()
         self.filter_query = ""
         self.filter_input.value = ""  # フィルタをクリア
+        self._reset_expand_sequence()
 
         # マシン名ヘッダーを更新（現在のマシンかチェック）
         is_current_machine = False
@@ -456,6 +464,8 @@ class FileList(Vertical):
 
     def _apply_filter(self) -> None:
         """フィルタを適用してリストを更新（変更フィルタ + ファジー検索）"""
+        # 表示対象が変わるため拡大シーケンスは仕切り直し
+        self._reset_expand_sequence()
         # Step 1: 変更フィルタ適用
         if self.show_changed_only:
             base_files = [f for f in self.files if self._is_changed_file(f)]
@@ -581,6 +591,9 @@ class FileList(Vertical):
                 return
 
         if 0 <= index < len(self.files):
+            # 手動トグルが入ったら拡大シーケンスは仕切り直し
+            self._reset_expand_sequence()
+
             # 現在の選択状態を確認
             is_selected = index in self.selected_files
             new_state = not is_selected
@@ -607,16 +620,110 @@ class FileList(Vertical):
         """選択されたファイルのリストを取得"""
         return [self.files[i] for i in self.selected_files if i < len(self.files)]
 
+    def _refresh_selection_display(self) -> None:
+        """選択マーカーをin-placeで再描画（リスト再構築なし＝カーソル維持）"""
+        for item in self.list_view.children:
+            if isinstance(item, FileListItem):
+                new_state = item.index in self.selected_files
+                if item._selected != new_state:
+                    item._selected = new_state
+                    item.update_display()
+
+    def _reset_expand_sequence(self) -> None:
+        """拡大選択シーケンスをリセット"""
+        self._expand_anchor = None
+        self._expand_anchor_index = -1
+        self._expand_level = 0
+        self._expand_base = set()
+
+    @staticmethod
+    def _prefix_for_level(anchor: str, level: int) -> Optional[str]:
+        """anchorパスからlevel段階上の選択プレフィックスを返す
+
+        level=1で親ディレクトリ、最大でトップレベルディレクトリまで。
+        範囲外（全ファイル選択になる段階以上）はNone。
+        """
+        parts = anchor.split("/")
+        max_level = len(parts) - 1  # ファイル名を除いた階層数
+        if level < 1 or level > max_level:
+            return None
+        return "/".join(parts[: len(parts) - level]) + "/"
+
+    def action_expand_selection(self) -> None:
+        """選択をカーソル行の親ディレクトリへ段階的に拡大（>キー）
+
+        押すたびに references/ → aaa/ → skills/ → ... と1階層ずつ広がる。
+        既存の選択はベースとして保持されるため、別の場所へカーソルを移して
+        再度拡大すれば複数グループの選択を累積できる。
+        """
+        current = self.get_current_file()
+        if not current:
+            self.app.notify("No file under cursor", severity="warning")
+            return
+
+        anchor = current["name"]
+        if self._expand_anchor != anchor:
+            # 新しい拡大シーケンスを開始（現在の選択をベースとして保持）
+            self._expand_anchor = anchor
+            self._expand_anchor_index = self._index_by_id[id(current)]
+            self._expand_level = 0
+            self._expand_base = set(self.selected_files)
+
+        if self._prefix_for_level(anchor, self._expand_level + 1) is None:
+            if self._expand_level == 0:
+                self.app.notify(
+                    "No parent directory to expand into", severity="warning"
+                )
+            else:
+                self.app.notify("Already at top level", severity="warning")
+            return
+
+        self._expand_level += 1
+        self._apply_expand_level()
+
+    def action_shrink_selection(self) -> None:
+        """拡大した選択をカーソル行に向かって1段階縮小（<キー）"""
+        if self._expand_anchor is None or self._expand_level == 0:
+            self.app.notify("No expanded selection to shrink", severity="warning")
+            return
+        self._expand_level -= 1
+        self._apply_expand_level()
+
+    def _apply_expand_level(self) -> None:
+        """現在の拡大レベルに応じて選択状態を再計算して表示"""
+        if self._expand_level == 0:
+            self.selected_files = set(self._expand_base) | {self._expand_anchor_index}
+            scope_label = self._expand_anchor
+            matched_count = 1
+        else:
+            prefix = self._prefix_for_level(self._expand_anchor, self._expand_level)
+            # フィルタ表示中のファイルのみ対象（select系の既存挙動と整合）
+            matched = {
+                self._index_by_id[id(f)]
+                for f in self.filtered_files
+                if f["name"].startswith(prefix)
+            }
+            matched.add(self._expand_anchor_index)
+            self.selected_files = set(self._expand_base) | matched
+            scope_label = prefix
+            matched_count = len(matched)
+
+        self._refresh_selection_display()
+        self._update_header()
+        self.app.notify(f"▸ {scope_label} ({matched_count} file(s))", timeout=2)
+
     def select_all(self) -> None:
         """すべてのファイルを選択（フィルタ中は表示されているファイルのみ）"""
         for file_info in self.filtered_files:
             self.selected_files.add(self._index_by_id[id(file_info)])
-        self._update_list_view()
+        self._refresh_selection_display()
+        self._update_header()
 
     def deselect_all(self) -> None:
         """すべてのファイルの選択を解除"""
+        self._reset_expand_sequence()
         self.selected_files.clear()
-        self._update_list_view()
+        self._refresh_selection_display()
         self._update_header()
 
     def action_deselect_all(self) -> None:
