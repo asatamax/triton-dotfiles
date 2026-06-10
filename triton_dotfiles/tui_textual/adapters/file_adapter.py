@@ -136,13 +136,9 @@ class TUIFileAdapter:
             for item in os.listdir(repo_path):
                 machine_path = os.path.join(repo_path, item)
                 if os.path.isdir(machine_path) and not item.startswith("."):
-                    # ファイル数をカウント
-                    file_count = len(
-                        [
-                            f
-                            for f in os.listdir(machine_path)
-                            if os.path.isfile(os.path.join(machine_path, f))
-                        ]
+                    # ファイル数を再帰的にカウント（一覧表示の収集と同じ深さ）
+                    file_count = sum(
+                        len(filenames) for _, _, filenames in os.walk(machine_path)
                     )
 
                     machines.append(
@@ -155,8 +151,11 @@ class TUIFileAdapter:
                         }
                     )
 
-            # ファイル数でソート
-            machines.sort(key=lambda x: x["file_count"], reverse=True)
+            # 並びを安定させる: 自マシンを先頭に、残りは名前順
+            current_machine = self.get_current_machine_name()
+            machines.sort(
+                key=lambda x: (x["name"] != current_machine, x["name"].lower())
+            )
 
         except Exception as e:
             print(f"Error scanning machines: {e}")
@@ -900,18 +899,26 @@ class TUIFileAdapter:
 
             # 結果を統合
             success_count = len(result.get("copied", []))
-            skip_count = len(result.get("skipped", []))
+            unchanged_count = len(result.get("unchanged", []))
             error_count = len(result.get("errors", []))
             cleaned_count = len(result.get("cleaned", []))
 
+            # 3状態: success（エラーなし） / partial（一部成功） / failed（全滅）
+            if error_count == 0:
+                status = "success"
+            elif success_count > 0 or cleaned_count > 0:
+                status = "partial"
+            else:
+                status = "failed"
+
             # メッセージを生成
             if dry_run:
-                msg = f"[DRY RUN] Would backup {success_count} files (skip {skip_count}, errors {error_count})"
+                msg = f"[DRY RUN] Would backup {success_count} files ({unchanged_count} unchanged, {error_count} errors)"
                 if cleaned_count:
                     msg += f", {cleaned_count} stale to clean"
                 message = msg
             else:
-                msg = f"Backup completed: {success_count} files copied, {skip_count} skipped, {error_count} errors"
+                msg = f"Backup completed: {success_count} files copied, {unchanged_count} unchanged, {error_count} errors"
                 if cleaned_count:
                     msg += f", {cleaned_count} stale cleaned"
                 message = msg
@@ -950,6 +957,7 @@ class TUIFileAdapter:
 
             return {
                 "success": error_count == 0,
+                "status": status,
                 "message": message,
                 "details": "\n".join(details) if details else "",
                 "result": result,
@@ -958,6 +966,7 @@ class TUIFileAdapter:
         except Exception as e:
             return {
                 "success": False,
+                "status": "failed",
                 "message": f"Backup failed: {str(e)}",
                 "details": "",
                 "result": {},
@@ -966,6 +975,10 @@ class TUIFileAdapter:
     def git_is_working_directory_clean(self) -> dict:
         """ワーキングディレクトリがクリーンかどうかを確認"""
         return self.file_manager.git_is_working_directory_clean()
+
+    def get_git_status_summary(self) -> dict:
+        """ワーキングツリーとupstreamの乖離サマリーを取得"""
+        return self.file_manager.git_status_summary()
 
     def git_pull_repository(self, dry_run: bool = False):
         """リポジトリでgit pullを実行"""

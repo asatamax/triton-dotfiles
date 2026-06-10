@@ -672,6 +672,7 @@ class FileManager:
         backup_dir = self.get_backup_dir(machine_name)
         results = {
             "copied": [],
+            "added": [],
             "skipped": [],
             "unchanged": [],
             "errors": [],
@@ -768,6 +769,9 @@ class FileManager:
                     results["unchanged"].append(str(relative_path))
                     continue
 
+                # コピー前に判定（リポジトリへの新規追加か既存更新か）
+                is_new_file = not dest_file.exists()
+
                 try:
                     if not dry_run:
                         dest_file.parent.mkdir(parents=True, exist_ok=True)
@@ -801,6 +805,8 @@ class FileManager:
                             print(f"Would copy: {relative_path}")
 
                     results["copied"].append(str(relative_path))
+                    if is_new_file:
+                        results["added"].append(str(relative_path))
 
                 except Exception as e:
                     error_msg = f"Error processing {source_file}: {e}"
@@ -1502,6 +1508,10 @@ class FileManager:
     def git_is_working_directory_clean(self) -> Dict[str, any]:
         """ワーキングディレクトリがクリーンかどうかを確認"""
         return self.git_manager.is_working_directory_clean()
+
+    def git_status_summary(self) -> Dict[str, any]:
+        """ワーキングツリーとupstreamの乖離サマリーを取得"""
+        return self.git_manager.get_status_summary()
 
     def git_commit_push_repository(
         self, machine_name: str = None, dry_run: bool = False

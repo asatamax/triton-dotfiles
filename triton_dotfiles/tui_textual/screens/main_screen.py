@@ -16,9 +16,9 @@ from ..widgets.dialogs import (
     ConfirmationDialog,
     InputDialog,
     MessageDialog,
+    OperationReportDialog,
     ProgressDialog,
     MachineSelectDialog,
-    OperationSuccessWithCommitDialog,
     ScrollableMessageDialog,
     ThreeChoiceDialog,
 )
@@ -200,6 +200,26 @@ class MainScreen(Static):
         # 初期フォーカスをファイルリストのListViewに設定
         self.file_list.list_view.focus()
 
+        # 乖離インジケータを更新（データ再読み込みの全経路で呼ばれる）
+        self._refresh_git_status()
+
+    def _refresh_git_status(self) -> None:
+        """ステータスバーの乖離インジケータを非同期で更新
+
+        uncommitted/unpushed/behindの乖離状態は同期ツールにおける
+        本当のリスクなので、操作のたびに最新化して常駐表示する。
+        """
+        self.run_worker(self._update_git_status(), exclusive=True, group="git-status")
+
+    async def _update_git_status(self) -> None:
+        try:
+            summary = await asyncio.to_thread(self.file_adapter.get_git_status_summary)
+            status_bar = self.app.query_one(StatusBar)
+            status_bar.set_git_status(summary)
+        except Exception:
+            # インジケータは補助情報なので失敗してもUIを止めない
+            pass
+
     def on_file_selected(self, message: FileSelected) -> None:
         """ファイル選択時の処理"""
         if self.current_machine:
@@ -327,9 +347,18 @@ class MainScreen(Static):
             submessage = "Local files will be overwritten. Continue?"
 
             # callbackパターンでダイアログを表示
+            # ローカル上書き操作: 対象一覧を明示し、デフォルトはNo（destructive）
             self._pending_restore_files = selected_files
             self.app.push_screen(
-                ConfirmationDialog(title, message, submessage),
+                ConfirmationDialog(
+                    title,
+                    message,
+                    submessage,
+                    file_list=(
+                        [f["name"] for f in selected_files] if file_count > 1 else None
+                    ),
+                    destructive=True,
+                ),
                 self._handle_restore_confirmation,
             )
 
@@ -342,7 +371,7 @@ class MainScreen(Static):
             # callbackパターンでダイアログを表示
             self._pending_restore_files = [current_file]
             self.app.push_screen(
-                ConfirmationDialog(title, message, submessage),
+                ConfirmationDialog(title, message, submessage, destructive=True),
                 self._handle_restore_confirmation,
             )
         else:
@@ -493,8 +522,14 @@ class MainScreen(Static):
         # ダイアログの結果に必要な情報を一時保存
         self._pending_export_path = validation["path"]
 
+        # 既存ファイルを上書きする場合のみ安全側デフォルト（No）にする
         self.app.push_screen(
-            ConfirmationDialog(title, message, submessage),
+            ConfirmationDialog(
+                title,
+                message,
+                submessage,
+                destructive=conflict_check["has_conflicts"],
+            ),
             self._handle_export_confirmation,
         )
 
@@ -561,31 +596,11 @@ class MainScreen(Static):
             )
 
     async def git_pull_repository(self):
-        """Git pullを実行"""
-        try:
-            # 確認ダイアログを表示
-            repo_info = self.file_adapter.get_repository_path_info()
-            title = "Git Pull Confirmation"
-            message = "Pull latest changes from repository"
-            submessage = f"Repository: {repo_info['path']}\nThis will update your local dotfiles database."
+        """Git pullを実行
 
-            # callbackパターンでダイアログを表示
-            self.app.push_screen(
-                ConfirmationDialog(title, message, submessage),
-                self._handle_git_pull_confirmation,
-            )
-
-        except Exception as e:
-            # 予期しないエラー
-            await self.app.push_screen(
-                MessageDialog("Error", f"Unexpected error: {str(e)}", "error")
-            )
-
-    async def _handle_git_pull_confirmation(self, confirmed: bool) -> None:
-        """Git pull確認ダイアログからのcallback処理"""
-        if not confirmed:
-            return
-
+        起動時auto-pullと同様、同期を維持する操作なので確認なしで実行する
+        （pullしないことの方が乖離リスク）。結果はダイアログで通知する。
+        """
         await self._perform_git_pull()
 
     async def _perform_git_pull(self):
@@ -921,35 +936,12 @@ class MainScreen(Static):
             # プログレスダイアログを閉じる
             progress_dialog.dismiss()
 
-            # 結果を表示
-            if result["success"]:
-                # ファイルリストを更新（バックアップ後に状態が変わるため）
-                # マシン選択を維持するため _load_files_for_current_machine を使用
-                if not dry_run:
-                    self._load_files_for_current_machine()
+            status = result.get(
+                "status", "success" if result.get("success") else "failed"
+            )
 
-                if dry_run:
-                    # Dry runの場合は従来通りスクロール可能ダイアログを使用
-                    await self.app.push_screen(
-                        ScrollableMessageDialog(
-                            f"{operation} Success",
-                            result["message"],
-                            result.get("details", ""),
-                            "success",
-                        )
-                    )
-                else:
-                    # 実行時はCommit&Push遷移オプション付きダイアログ
-                    self.app.push_screen(
-                        OperationSuccessWithCommitDialog(
-                            f"{operation} Success",
-                            result["message"],
-                            result.get("details", ""),
-                        ),
-                        self._handle_commit_continuation_choice,
-                    )
-            else:
-                # エラー時もスクロール可能ダイアログを使用
+            # 全滅時のみ従来のエラーダイアログ（部分成功はレポートで見せる）
+            if status == "failed":
                 await self.app.push_screen(
                     ScrollableMessageDialog(
                         f"{operation} Failed",
@@ -958,6 +950,18 @@ class MainScreen(Static):
                         "error",
                     )
                 )
+                return
+
+            # ファイルリストを更新（バックアップ後に状態が変わるため）
+            # マシン選択を維持するため _load_files_for_current_machine を使用
+            if not dry_run:
+                self._load_files_for_current_machine()
+
+            report = self._build_backup_report(result, dry_run)
+            if dry_run:
+                self.app.push_screen(report, self._handle_backup_dry_run_continuation)
+            else:
+                self.app.push_screen(report, self._handle_commit_continuation_choice)
 
         except Exception as e:
             # プログレスダイアログを閉じる
@@ -967,6 +971,79 @@ class MainScreen(Static):
             await self.app.push_screen(
                 MessageDialog(f"{operation} Error", f"Backup failed: {str(e)}", "error")
             )
+
+    def _build_backup_report(
+        self, result: dict, dry_run: bool
+    ) -> OperationReportDialog:
+        """backup結果から構造化レポートダイアログを構築
+
+        変更があったファイルのみGit風プレフィックス（+ 新規 / M 更新 / - 削除）
+        で表示し、大量のUnchangedは折りたたむ。
+        """
+        raw = result.get("result", {})
+        copied = raw.get("copied", [])
+        added = set(raw.get("added", []))
+        unchanged = raw.get("unchanged", [])
+        protected = raw.get("skipped", [])
+        errors = raw.get("errors", [])
+        cleaned = raw.get("cleaned", [])
+        status = result.get("status", "success")
+
+        machine_name = self.file_adapter.get_current_machine_name() or "local"
+
+        counts = [
+            ("Copied", len(copied), "green"),
+            ("Unchanged", len(unchanged), "white"),
+        ]
+        if cleaned:
+            counts.append(("Cleaned", len(cleaned), "yellow"))
+        if errors:
+            counts.append(("Errors", len(errors), "red"))
+
+        changes = [
+            ("+", path, "green") if path in added else ("M", path, "yellow")
+            for path in copied
+        ]
+        changes += [("-", path, "red") for path in cleaned]
+        changes += [("✗", error, "red") for error in errors]
+
+        collapsed = []
+        if unchanged:
+            collapsed.append(("Unchanged files", unchanged))
+        if protected:
+            collapsed.append(("Protected (skipped)", protected))
+
+        if dry_run:
+            has_pending = bool(copied or cleaned)
+            return OperationReportDialog(
+                title="Backup Dry Run",
+                status="warning" if has_pending else "success",
+                machine_label=f"{machine_name} → repo",
+                counts=counts,
+                changes=changes,
+                collapsed_sections=collapsed,
+                actions=[("Run Backup", "run")] if has_pending else [],
+                focus_action=True,
+            )
+
+        title = (
+            "Backup complete" if status == "success" else "Backup completed with errors"
+        )
+        return OperationReportDialog(
+            title=title,
+            status=status,
+            machine_label=f"{machine_name} → repo",
+            counts=counts,
+            changes=changes,
+            collapsed_sections=collapsed,
+            actions=[("Commit & Push", "commit"), ("Dry Run", "dry")],
+            focus_action=True,
+        )
+
+    async def _handle_backup_dry_run_continuation(self, choice: str) -> None:
+        """Backup dry-runレポートからのcallback処理"""
+        if choice == "run":
+            await self._perform_backup(dry_run=False)
 
     async def git_commit_push_repository(self):
         """現在のマシンの変更をgit commit & pushする"""
@@ -1103,8 +1180,9 @@ class MainScreen(Static):
             )
 
             # 3択ダイアログを使用（Yes/No/Dry Run）
+            # repo側の削除操作なのでDry Runをデフォルトフォーカスにする
             self.app.push_screen(
-                ThreeChoiceDialog(title, message, submessage),
+                ThreeChoiceDialog(title, message, submessage, default="dry"),
                 self._handle_cleanup_choice,
             )
 
@@ -1121,6 +1199,11 @@ class MainScreen(Static):
         elif choice == "dry":
             await self._perform_repository_cleanup(dry_run=True)
         # choice == "no" の場合は何もしない
+
+    async def _handle_cleanup_dry_run_continuation(self, choice: str) -> None:
+        """Cleanup dry-runレポートからのcallback処理"""
+        if choice == "run":
+            await self._perform_repository_cleanup(dry_run=False)
 
     async def _perform_repository_cleanup(self, dry_run: bool = False):
         """実際のリポジトリクリーンアップを実行"""
@@ -1141,30 +1224,25 @@ class MainScreen(Static):
             # プログレスダイアログを閉じる
             progress_dialog.dismiss()
 
-            # 結果メッセージを構築
+            # 結果を表示
             cleanup_result = result.get("result", {})
+            machine_label = f"repo/{current_machine}"
             if dry_run:
-                # Dry runの場合
-                would_delete = len(cleanup_result.get("would_delete", []))
-                if would_delete > 0:
-                    files_list = "\n".join(
-                        f"• {file}" for file in cleanup_result["would_delete"][:10]
+                would_delete = cleanup_result.get("would_delete", [])
+                if would_delete:
+                    # dry-run結果からそのまま本実行に進める（やり直し不要）。
+                    # 削除操作なのでデフォルトフォーカスはClose。
+                    report = OperationReportDialog(
+                        title="Cleanup Dry Run",
+                        status="warning",
+                        machine_label=machine_label,
+                        counts=[("Would delete", len(would_delete), "red")],
+                        changes=[("-", path, "red") for path in would_delete],
+                        actions=[("Run Cleanup", "run")],
+                        focus_action=False,
                     )
-                    if len(cleanup_result["would_delete"]) > 10:
-                        files_list += f"\n... and {len(cleanup_result['would_delete']) - 10} more files"
-
-                    details = (
-                        f"Files that would be deleted:\n\n{files_list}\n\n"
-                        f"Run the actual cleanup (not dry run) to delete these files permanently."
-                    )
-
-                    await self.app.push_screen(
-                        ScrollableMessageDialog(
-                            "Dry Run Results",
-                            f"Found {would_delete} orphaned file(s) that would be deleted.",
-                            details,
-                            "warning",
-                        )
+                    self.app.push_screen(
+                        report, self._handle_cleanup_dry_run_continuation
                     )
                 else:
                     await self.app.push_screen(
@@ -1175,53 +1253,45 @@ class MainScreen(Static):
                         )
                     )
             else:
-                # 実際の削除の場合
-                deleted = len(cleanup_result.get("deleted", []))
-                errors = len(cleanup_result.get("errors", []))
+                deleted = cleanup_result.get("deleted", [])
+                errors = cleanup_result.get("errors", [])
 
-                if deleted > 0 or errors > 0:
-                    details = ""
-                    if deleted > 0:
-                        deleted_list = "\n".join(
-                            f"• {file}" for file in cleanup_result["deleted"][:10]
-                        )
-                        if len(cleanup_result["deleted"]) > 10:
-                            deleted_list += f"\n... and {len(cleanup_result['deleted']) - 10} more files"
-                        details += f"Deleted files:\n\n{deleted_list}\n\n"
-
-                    if errors > 0:
-                        error_list = "\n".join(
-                            f"✗ {error}" for error in cleanup_result["errors"][:5]
-                        )
-                        if len(cleanup_result["errors"]) > 5:
-                            error_list += f"\n... and {len(cleanup_result['errors']) - 5} more errors"
-                        details += f"Errors:\n\n{error_list}\n\n"
-
-                    summary = f"Deleted {deleted} file(s), {errors} error(s) occurred."
-
+                if deleted or errors:
                     # データを再読み込み（ファイルが削除されたので更新、マシン選択を維持）
                     self._refresh_data_preserve_machine()
 
-                    if deleted > 0 and errors == 0:
-                        # クリーンな成功時はBackupと同様にCommit&Push遷移オプションを提示
-                        self.app.push_screen(
-                            OperationSuccessWithCommitDialog(
-                                "Repository Cleanup Complete",
-                                summary,
-                                details,
-                            ),
-                            self._handle_commit_continuation_choice,
-                        )
-                    else:
-                        # エラー混じり、もしくは削除0で警告のみ → 従来のScrollable表示
-                        await self.app.push_screen(
-                            ScrollableMessageDialog(
-                                "Repository Cleanup Complete",
-                                summary,
-                                details,
-                                "warning",
-                            )
-                        )
+                    counts = [("Deleted", len(deleted), "red")]
+                    if errors:
+                        counts.append(("Errors", len(errors), "red"))
+
+                    changes = [("-", path, "red") for path in deleted]
+                    changes += [("✗", error, "red") for error in errors]
+
+                    status = "success" if not errors else "partial"
+                    title = (
+                        "Cleanup complete"
+                        if not errors
+                        else "Cleanup completed with errors"
+                    )
+                    # repoを書き換えたのでCommit&Pushへの継続を提示
+                    actions = (
+                        [("Commit & Push", "commit"), ("Dry Run", "dry")]
+                        if deleted
+                        else []
+                    )
+
+                    self.app.push_screen(
+                        OperationReportDialog(
+                            title=title,
+                            status=status,
+                            machine_label=machine_label,
+                            counts=counts,
+                            changes=changes,
+                            actions=actions,
+                            focus_action=bool(deleted),
+                        ),
+                        self._handle_commit_continuation_choice,
+                    )
                 else:
                     await self.app.push_screen(
                         MessageDialog(
