@@ -2,76 +2,151 @@
 Dialog widgets for the Textual TUI
 """
 
+from typing import Dict, List, Optional, Tuple, Union
+
+from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import Center, Horizontal, Middle, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.containers import Vertical, Horizontal, Center, Middle
 from textual.widgets import (
     Button,
-    Label,
+    Collapsible,
     Input,
-    ProgressBar,
+    Label,
     ListItem,
     ListView,
+    ProgressBar,
     RichLog,
+    Static,
 )
-from textual.app import ComposeResult
-from textual.message import Message
-from rich.text import Text
-from typing import List, Dict, Union
 
 
-class DialogResult(Message):
-    """ダイアログの結果メッセージ"""
+class BaseDialog(ModalScreen):
+    """全ダイアログ共通の基底クラス
 
-    def __init__(self, result: bool, data: any = None):
-        self.result = result  # True: OK/Yes, False: Cancel/No
-        self.data = data
-        super().__init__()
+    共通CSS（コンテナ/ボタン/キーヒント）、ステータスアイコン・色マップを
+    一元管理する。個別のレイアウトとキーハンドリングはサブクラスが持つ。
+    """
 
+    ICONS = {
+        "success": "✓",
+        "partial": "!",
+        "error": "✗",
+        "warning": "⚠",
+        "info": "ℹ",
+    }
 
-class ConfirmationDialog(ModalScreen[bool]):
-    """確認ダイアログ"""
+    COLORS = {
+        "success": "green",
+        "partial": "yellow",
+        "error": "red",
+        "warning": "yellow",
+        "info": "blue",
+    }
 
     DEFAULT_CSS = """
-    ConfirmationDialog {
+    BaseDialog {
         align: center middle;
     }
-    
-    .dialog-container {
+
+    BaseDialog .dialog-container {
         width: 80;
         height: auto;
         background: $surface;
         border: solid $primary;
         padding: 1;
     }
-    
-    .dialog-content {
+
+    BaseDialog .dialog-content {
         height: auto;
-        text-align: center;
         margin: 1 0;
         width: 1fr;
     }
-    
-    .dialog-content Label {
-        text-wrap: wrap;
-        width: 1fr;
-    }
-    
-    .dialog-buttons {
+
+    BaseDialog .dialog-buttons {
         height: 3;
         align: center middle;
     }
-    
-    .dialog-buttons Button {
+
+    BaseDialog .dialog-buttons Button {
         margin: 0 1;
         min-width: 8;
     }
+
+    BaseDialog .dialog-key-hints {
+        height: 1;
+        width: 1fr;
+        text-align: center;
+        color: $text-muted;
+    }
     """
 
-    def __init__(self, title: str, message: str, submessage: str = ""):
+    def _icon_text(self, message_type: str, label: str = "") -> Text:
+        """ステータスアイコン付きテキストを生成"""
+        icon = self.ICONS.get(message_type, self.ICONS["info"])
+        color = self.COLORS.get(message_type, "white")
+        text = Text()
+        text.append(icon, style=f"bold {color}")
+        if label:
+            text.append(f" {label}", style=f"bold {color}")
+        return text
+
+
+class ConfirmationDialog(BaseDialog):
+    """確認ダイアログ（Yes/No）
+
+    Args:
+        title: ダイアログタイトル
+        message: メイン メッセージ
+        submessage: 補足説明（dim表示）
+        file_list: 対象ファイル一覧（指定時は先頭数件を表示）
+        destructive: ローカル破壊系操作（Restore上書き等）の場合True。
+            デフォルトフォーカスがNo側になる。
+    """
+
+    MAX_LIST_ITEMS = 8
+
+    DEFAULT_CSS = """
+    ConfirmationDialog .dialog-content {
+        text-align: center;
+    }
+
+    ConfirmationDialog .dialog-content Label {
+        text-wrap: wrap;
+        width: 1fr;
+    }
+
+    ConfirmationDialog .dialog-file-list {
+        margin: 1 2 0 2;
+        height: auto;
+        max-height: 10;
+    }
+    """
+
+    def __init__(
+        self,
+        title: str,
+        message: str,
+        submessage: str = "",
+        file_list: Optional[List[str]] = None,
+        destructive: bool = False,
+    ):
         super().__init__()
         self.title = title
         self.message = message
         self.submessage = submessage
+        self.file_list = file_list or []
+        self.destructive = destructive
+
+    def _build_file_list_text(self) -> Text:
+        text = Text()
+        for name in self.file_list[: self.MAX_LIST_ITEMS]:
+            text.append("• ", style="dim")
+            text.append(f"{name}\n")
+        remaining = len(self.file_list) - self.MAX_LIST_ITEMS
+        if remaining > 0:
+            text.append(f"... and {remaining} more", style="dim")
+        return text
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -80,12 +155,22 @@ class ConfirmationDialog(ModalScreen[bool]):
                     yield Label(self.title, classes="dialog-title")
                     with Vertical(classes="dialog-content"):
                         yield Label(self.message)
+                        if self.file_list:
+                            yield Static(
+                                self._build_file_list_text(),
+                                classes="dialog-file-list",
+                            )
                         if self.submessage:
                             yield Label(Text(self.submessage, style="dim"))
 
                     with Horizontal(classes="dialog-buttons"):
                         yield Button("Yes", variant="primary", id="yes-button")
                         yield Button("No", variant="default", id="no-button")
+
+    def on_mount(self) -> None:
+        # 破壊的操作は安全側（No）をデフォルトフォーカスにする
+        if self.destructive:
+            self.query_one("#no-button", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "yes-button":
@@ -100,39 +185,16 @@ class ConfirmationDialog(ModalScreen[bool]):
             self.dismiss(False)
 
 
-class InputDialog(ModalScreen[str]):
+class InputDialog(BaseDialog):
     """入力ダイアログ"""
 
     DEFAULT_CSS = """
-    InputDialog {
-        align: center middle;
-    }
-    
-    .dialog-container {
+    InputDialog .dialog-container {
         width: 60;
-        height: auto;
-        background: $surface;
-        border: solid $primary;
-        padding: 1;
     }
-    
-    .dialog-content {
-        height: auto;
+
+    InputDialog .dialog-input {
         margin: 1 0;
-    }
-    
-    .dialog-input {
-        margin: 1 0;
-    }
-    
-    .dialog-buttons {
-        height: 3;
-        align: center middle;
-    }
-    
-    .dialog-buttons Button {
-        margin: 0 1;
-        min-width: 8;
     }
     """
 
@@ -161,69 +223,34 @@ class InputDialog(ModalScreen[str]):
     def on_mount(self) -> None:
         self.input_field.focus()
 
+    def _submit_value(self, raw_value: str) -> None:
+        value = raw_value.strip()
+        self.dismiss(value if value else None)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "ok-button":
-            value = self.input_field.value.strip()
-            if value:
-                self.dismiss(value)
-            else:
-                self.dismiss(None)
+            self._submit_value(self.input_field.value)
         else:
             self.dismiss(None)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        value = event.value.strip()
-        if value:
-            self.dismiss(value)
-        else:
-            self.dismiss(None)
+        self._submit_value(event.value)
 
     def on_key(self, event) -> None:
         if event.key == "escape":
             self.dismiss(None)
 
 
-class MessageDialog(ModalScreen):
-    """メッセージダイアログ"""
+class MessageDialog(BaseDialog):
+    """メッセージダイアログ（Enter/Escで閉じる）"""
 
     DEFAULT_CSS = """
-    MessageDialog {
-        align: center middle;
-    }
-    
-    .dialog-container {
+    MessageDialog .dialog-container {
         width: 90;
-        height: auto;
-        background: $surface;
-        border: solid $primary;
-        padding: 1;
     }
 
-    .dialog-content {
-        height: auto;
+    MessageDialog .dialog-content {
         text-align: left;
-        margin: 1 0;
-    }
-    
-    .dialog-buttons {
-        height: 3;
-        align: center middle;
-    }
-    
-    .success-icon {
-        color: $success;
-    }
-    
-    .error-icon {
-        color: $error;
-    }
-    
-    .warning-icon {
-        color: $warning;
-    }
-    
-    .info-icon {
-        color: $accent;
     }
     """
 
@@ -236,27 +263,13 @@ class MessageDialog(ModalScreen):
         self.message_type = message_type
 
     def compose(self) -> ComposeResult:
-        # アイコンを選択
-        icons = {"success": "✓", "error": "✗", "warning": "⚠", "info": "ℹ"}
-        icon = icons.get(self.message_type, "ℹ")
-
         with Center():
             with Middle():
                 with Vertical(classes="dialog-container"):
                     yield Label(self.title, classes="dialog-title")
                     with Vertical(classes="dialog-content"):
-                        icon_text = Text()
-                        # Textual組み込みの色名を使用
-                        color_map = {
-                            "success": "green",
-                            "error": "red",
-                            "warning": "yellow",
-                            "info": "blue",
-                        }
-                        icon_color = color_map.get(self.message_type, "white")
-                        icon_text.append(icon, style=icon_color)
+                        icon_text = self._icon_text(self.message_type)
                         icon_text.append(" ")
-                        # Text objectの場合はそのまま追加（スタイル保持）
                         if isinstance(self.message, Text):
                             icon_text.append_text(self.message)
                         else:
@@ -274,50 +287,37 @@ class MessageDialog(ModalScreen):
             self.dismiss()
 
 
-class ThreeChoiceDialog(ModalScreen[str]):
-    """3択ダイアログ（Yes/No/Dry Run）"""
+class ThreeChoiceDialog(BaseDialog):
+    """3択ダイアログ（Yes/Dry Run/No）
+
+    Args:
+        default: デフォルトフォーカスする選択肢（"yes" / "dry" / "no"）。
+            同期を前進させる操作はyes、破壊的操作はdry/noを指定する。
+    """
 
     DEFAULT_CSS = """
-    ThreeChoiceDialog {
-        align: center middle;
-    }
-    
-    .dialog-container {
-        width: 80;
-        height: auto;
-        background: $surface;
-        border: solid $primary;
-        padding: 1;
-    }
-    
-    .dialog-content {
-        height: auto;
+    ThreeChoiceDialog .dialog-content {
         text-align: center;
-        margin: 1 0;
-        width: 1fr;
     }
-    
-    .dialog-content Label {
+
+    ThreeChoiceDialog .dialog-content Label {
         text-wrap: wrap;
         width: 1fr;
     }
-    
-    .dialog-buttons {
-        height: 3;
-        align: center middle;
-    }
-    
-    .dialog-buttons Button {
-        margin: 0 1;
+
+    ThreeChoiceDialog .dialog-buttons Button {
         min-width: 10;
     }
     """
 
-    def __init__(self, title: str, message: str, submessage: str = ""):
+    def __init__(
+        self, title: str, message: str, submessage: str = "", default: str = "yes"
+    ):
         super().__init__()
         self.title = title
         self.message = message
         self.submessage = submessage
+        self.default = default if default in ("yes", "dry", "no") else "yes"
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -333,6 +333,9 @@ class ThreeChoiceDialog(ModalScreen[str]):
                         yield Button("Yes", variant="primary", id="yes-button")
                         yield Button("Dry Run", variant="default", id="dry-button")
                         yield Button("No", variant="default", id="no-button")
+
+    def on_mount(self) -> None:
+        self.query_one(f"#{self.default}-button", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "yes-button":
@@ -351,28 +354,15 @@ class ThreeChoiceDialog(ModalScreen[str]):
             self.dismiss("no")
 
 
-class ProgressDialog(ModalScreen):
+class ProgressDialog(BaseDialog):
     """プログレスダイアログ"""
 
     DEFAULT_CSS = """
-    ProgressDialog {
-        align: center middle;
-    }
-    
-    .dialog-container {
+    ProgressDialog .dialog-container {
         width: 60;
-        height: auto;
-        background: $surface;
-        border: solid $primary;
-        padding: 1;
     }
-    
-    .dialog-content {
-        height: auto;
-        margin: 1 0;
-    }
-    
-    .progress-container {
+
+    ProgressDialog .progress-container {
         margin: 1 0;
     }
     """
@@ -400,40 +390,22 @@ class ProgressDialog(ModalScreen):
             self.query_one("#progress-message", Label).update(message)
 
 
-class MachineSelectDialog(ModalScreen):
+class MachineSelectDialog(BaseDialog):
     """マシン選択ダイアログ"""
 
     DEFAULT_CSS = """
-    MachineSelectDialog {
-        align: center middle;
-    }
-    
-    .dialog-container {
+    MachineSelectDialog .dialog-container {
         width: 60;
         height: 20;
-        background: $surface;
-        border: solid $primary;
-        padding: 1;
     }
-    
-    .dialog-content {
+
+    MachineSelectDialog .dialog-content {
         height: 1fr;
-        margin: 1 0;
     }
-    
-    .machine-list {
+
+    MachineSelectDialog .machine-list {
         height: 1fr;
         border: solid $primary;
-    }
-    
-    .dialog-buttons {
-        height: 3;
-        align: center middle;
-    }
-    
-    .dialog-buttons Button {
-        margin: 0 1;
-        min-width: 8;
     }
     """
 
@@ -486,8 +458,6 @@ class MachineSelectDialog(ModalScreen):
 
             if is_current_machine:
                 # 現在のマシンは星と装飾付き
-                from rich.text import Text
-
                 item_text = Text.assemble(
                     ("🌟 ", "bold yellow"),
                     (machine["name"], "bold green"),
@@ -496,8 +466,6 @@ class MachineSelectDialog(ModalScreen):
                 )
             else:
                 # 他のマシンは通常表示
-                from rich.text import Text
-
                 item_text = Text(f"💾 {machine['name']} ({description})")
 
             item = ListItem(Label(item_text))
@@ -543,59 +511,33 @@ class MachineSelectDialog(ModalScreen):
             self.dismiss(None)
 
 
-class ScrollableMessageDialog(ModalScreen):
-    """スクロール可能な詳細メッセージダイアログ"""
+class ScrollableMessageDialog(BaseDialog):
+    """スクロール可能な詳細メッセージダイアログ（閉じるだけの情報表示）"""
 
     DEFAULT_CSS = """
-    ScrollableMessageDialog {
-        align: center middle;
-    }
-
-    .dialog-container {
+    ScrollableMessageDialog .dialog-container {
         width: 90;
         height: 30;
-        background: $surface;
-        border: solid $primary;
-        padding: 1;
     }
 
-    .dialog-header {
+    ScrollableMessageDialog .dialog-header {
         height: 3;
         text-align: center;
         margin-bottom: 1;
     }
 
-    .dialog-content {
+    ScrollableMessageDialog .dialog-content {
         height: 1fr;
-        margin: 1 0;
     }
 
-    .content-area {
+    ScrollableMessageDialog .content-area {
         height: 1fr;
         border: solid $primary;
         scrollbar-gutter: stable;
     }
 
-    .dialog-buttons {
-        height: 3;
-        align: center middle;
+    ScrollableMessageDialog .dialog-buttons {
         margin-top: 1;
-    }
-
-    .success-title {
-        color: $success;
-    }
-
-    .error-title {
-        color: $error;
-    }
-
-    .warning-title {
-        color: $warning;
-    }
-
-    .info-title {
-        color: $accent;
     }
     """
 
@@ -609,28 +551,11 @@ class ScrollableMessageDialog(ModalScreen):
         self.message_type = message_type
 
     def compose(self) -> ComposeResult:
-        # アイコンを選択
-        icons = {"success": "✓", "error": "✗", "warning": "⚠", "info": "ℹ"}
-        icon = icons.get(self.message_type, "ℹ")
-        title_class = f"{self.message_type}-title"
-
         with Center():
             with Middle():
                 with Vertical(classes="dialog-container"):
                     with Vertical(classes="dialog-header"):
-                        icon_text = Text()
-                        # Textual組み込みの色名を使用
-                        color_map = {
-                            "success": "green",
-                            "error": "red",
-                            "warning": "yellow",
-                            "info": "blue",
-                        }
-                        icon_color = color_map.get(self.message_type, "white")
-                        icon_text.append(
-                            f"{icon} {self.title}", style=f"bold {icon_color}"
-                        )
-                        yield Label(icon_text, classes=title_class)
+                        yield Label(self._icon_text(self.message_type, self.title))
 
                     with Vertical(classes="dialog-content"):
                         # RichLogでANSIコード対応の表示
@@ -646,14 +571,12 @@ class ScrollableMessageDialog(ModalScreen):
 
     def on_mount(self) -> None:
         """マウント時にコンテンツを書き込む"""
-        # コンテンツを結合
         full_content = self.message
         if self.details:
             full_content += f"\n\n{self.details}"
 
         # ANSIコードをRich Textに変換して表示
-        rich_text = Text.from_ansi(full_content)
-        self.rich_log.write(rich_text)
+        self.rich_log.write(Text.from_ansi(full_content))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss()
@@ -663,132 +586,181 @@ class ScrollableMessageDialog(ModalScreen):
             self.dismiss()
 
 
-class OperationSuccessWithCommitDialog(ModalScreen[str]):
-    """操作成功後のダイアログ（Commit&Push遷移オプション付き）
+class OperationReportDialog(BaseDialog):
+    """操作結果の構造化レポート + 継続アクション
 
-    リポジトリを書き換える操作（Backup, Cleanup等）の完了後に表示し、
-    そのままGit Commit&Pushに進めるための共通ダイアログ。
+    Backup/Cleanup等の結果をサマリ行・変更ファイル一覧・折りたたみ
+    セクションで表示し、次のアクション（Commit & Push等）へ進める。
+    閉じるだけのScrollableMessageDialogと区別するため二重枠で表示する。
+
+    Args:
+        title: タイトル（例: "Backup complete"）
+        status: "success" / "partial" / "warning"
+        machine_label: タイトル右に添える文脈（例: "MacBook → repo"）
+        counts: サマリ行 [(ラベル, 件数, 色), ...]
+        changes: 変更ファイル行 [(プレフィックス, テキスト, 色), ...]
+        collapsed_sections: 折りたたみ表示 [(タイトル, 行リスト), ...]
+        actions: 継続アクション [(ボタンラベル, 結果キー), ...]。
+            結果キーの頭文字がショートカットキーになる。
+        focus_action: Trueなら先頭アクションをデフォルトフォーカス
+            （Enterで標準経路を完走できる）。破壊的アクションはFalse。
     """
 
     DEFAULT_CSS = """
-    OperationSuccessWithCommitDialog {
-        align: center middle;
-    }
-
-    /* 「次のアクションに進む」ダイアログ: 閉じるだけの情報ダイアログ
-       （solid $primary）と区別するため二重枠+successカラーにする */
-    .dialog-container {
+    OperationReportDialog .dialog-container {
         width: 90;
         height: 30;
-        background: $surface;
         border: double $success;
-        padding: 1;
     }
 
-    .dialog-key-hints {
+    OperationReportDialog .dialog-container.status-partial,
+    OperationReportDialog .dialog-container.status-warning {
+        border: double $warning;
+    }
+
+    OperationReportDialog .report-title {
         height: 1;
         width: 1fr;
-        text-align: center;
-        color: $text-muted;
-    }
-
-    .dialog-header {
-        height: 3;
         text-align: center;
         margin-bottom: 1;
     }
 
-    .dialog-content {
-        height: 1fr;
-        margin: 1 0;
+    OperationReportDialog .report-counts {
+        height: 1;
+        width: 1fr;
+        text-align: center;
+        margin-bottom: 1;
     }
 
-    .content-area {
+    OperationReportDialog .report-body {
         height: 1fr;
-        border: solid $primary;
+        border: solid $primary-darken-2;
+        padding: 0 1;
         scrollbar-gutter: stable;
     }
 
-    .dialog-buttons {
-        height: 3;
-        align: center middle;
+    OperationReportDialog .report-body Static {
+        height: auto;
+        width: 1fr;
+    }
+
+    OperationReportDialog Collapsible {
+        border: none;
+        padding: 0;
+    }
+
+    OperationReportDialog .dialog-buttons {
         margin-top: 1;
     }
 
-    .dialog-buttons Button {
-        margin: 0 1;
+    OperationReportDialog .dialog-buttons Button {
         min-width: 14;
-    }
-
-    .success-title {
-        color: $success;
     }
     """
 
-    def __init__(self, title: str, message: str, details: str = ""):
+    def __init__(
+        self,
+        title: str,
+        status: str = "success",
+        machine_label: str = "",
+        counts: Optional[List[Tuple[str, int, str]]] = None,
+        changes: Optional[List[Tuple[str, str, str]]] = None,
+        collapsed_sections: Optional[List[Tuple[str, List[str]]]] = None,
+        actions: Optional[List[Tuple[str, str]]] = None,
+        focus_action: bool = True,
+    ):
         super().__init__()
         self.title = title
-        self.message = message
-        self.details = details
+        self.status = (
+            status if status in ("success", "partial", "warning") else "success"
+        )
+        self.machine_label = machine_label
+        self.counts = counts or []
+        self.changes = changes or []
+        self.collapsed_sections = collapsed_sections or []
+        self.actions = actions or []
+        self.focus_action = focus_action
+        # 結果キーの頭文字 → 結果キー（例: "c" → "commit"）
+        self._key_map = {key[0]: key for _, key in self.actions}
+
+    def _build_title_text(self) -> Text:
+        text = self._icon_text(self.status, self.title)
+        if self.machine_label:
+            text.append(f"   {self.machine_label}", style="dim")
+        return text
+
+    def _build_counts_text(self) -> Text:
+        text = Text()
+        for i, (label, value, style) in enumerate(self.counts):
+            if i > 0:
+                text.append("   ")
+            text.append(f"{label} ", style="bold cyan")
+            text.append(str(value), style=f"bold {style}")
+        return text
+
+    def _build_changes_text(self) -> Text:
+        text = Text()
+        for i, (prefix, line, style) in enumerate(self.changes):
+            if i > 0:
+                text.append("\n")
+            text.append(f"{prefix} ", style=f"bold {style}")
+            text.append(line)
+        return text
+
+    def _build_key_hints(self) -> str:
+        hints = []
+        for i, (label, key) in enumerate(self.actions):
+            if i == 0 and self.focus_action:
+                hints.append(f"Enter: {label}")
+            else:
+                hints.append(f"{key[0].upper()}: {label}")
+        hints.append("Esc: Close")
+        return "   ·   ".join(hints)
 
     def compose(self) -> ComposeResult:
         with Center():
             with Middle():
-                with Vertical(classes="dialog-container"):
-                    with Vertical(classes="dialog-header"):
-                        icon_text = Text()
-                        icon_text.append(f"✓ {self.title}", style="bold green")
-                        yield Label(icon_text, classes="success-title")
+                with Vertical(classes=f"dialog-container status-{self.status}"):
+                    yield Label(self._build_title_text(), classes="report-title")
+                    if self.counts:
+                        yield Static(self._build_counts_text(), classes="report-counts")
 
-                    with Vertical(classes="dialog-content"):
-                        # RichLogでANSIコード対応の表示
-                        self.rich_log = RichLog(
-                            highlight=False,
-                            markup=False,
-                            classes="content-area",
-                        )
-                        yield self.rich_log
+                    with VerticalScroll(classes="report-body"):
+                        if self.changes:
+                            yield Static(self._build_changes_text())
+                        for section_title, lines in self.collapsed_sections:
+                            with Collapsible(
+                                title=f"{section_title} ({len(lines)})",
+                                collapsed=True,
+                            ):
+                                yield Static(Text("\n".join(lines), style="dim"))
 
                     with Horizontal(classes="dialog-buttons"):
-                        yield Button(
-                            "Commit & Push",
-                            variant="primary",
-                            id="commit-button",
-                        )
-                        yield Button("Dry Run", variant="default", id="dry-button")
+                        for i, (label, key) in enumerate(self.actions):
+                            yield Button(
+                                label,
+                                variant="primary" if i == 0 else "default",
+                                id=f"action-{key}",
+                            )
                         yield Button("Close", variant="default", id="close-button")
 
-                    # Enterの意味がMessageDialog系（閉じる）と異なるため明示する
-                    yield Label(
-                        "Enter: Commit & Push   ·   D: Dry Run   ·   Esc: Close",
-                        classes="dialog-key-hints",
-                    )
+                    yield Label(self._build_key_hints(), classes="dialog-key-hints")
 
     def on_mount(self) -> None:
-        # コンテンツを結合
-        full_content = self.message
-        if self.details:
-            full_content += f"\n\n{self.details}"
-
-        # ANSIコードをRich Textに変換して表示
-        rich_text = Text.from_ansi(full_content)
-        self.rich_log.write(rich_text)
-
-        # Commit & Pushボタンにフォーカス（Enterで即実行可能に）
-        self.query_one("#commit-button", Button).focus()
+        if self.actions and self.focus_action:
+            self.query_one(f"#action-{self.actions[0][1]}", Button).focus()
+        else:
+            self.query_one("#close-button", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "commit-button":
-            self.dismiss("commit")
-        elif event.button.id == "dry-button":
-            self.dismiss("dry")
+        button_id = event.button.id or ""
+        if button_id.startswith("action-"):
+            self.dismiss(button_id.removeprefix("action-"))
         else:
             self.dismiss("close")
 
     def on_key(self, event) -> None:
-        if event.key == "c":
-            self.dismiss("commit")
-        elif event.key == "d":
-            self.dismiss("dry")
-        elif event.key == "escape":
+        if event.key == "escape":
             self.dismiss("close")
+        elif event.key in self._key_map:
+            self.dismiss(self._key_map[event.key])

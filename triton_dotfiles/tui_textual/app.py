@@ -118,19 +118,21 @@ class TritonTUIApp(App):
         super().__init__()
         self.skip_startup = skip_startup
 
+    # Footerには主要操作のみ表示し（show=True）、残りは?ヘルプに集約する。
+    # 表示枠: B / R / d / m / C / ? / q（+ FileListの "/"）
     BINDINGS = [
         # システム
         Binding("q", "quit", "Quit"),
-        Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("?", "show_help", "Help"),
         # ファイル操作
-        Binding("space", "toggle_selection", "Toggle"),
+        Binding("space", "toggle_selection", "Toggle", show=False),
         # 表示モード
-        Binding("b", "toggle_backup", "Backup View"),
-        Binding("l", "toggle_local", "Local"),
+        Binding("b", "toggle_backup", "Backup View", show=False),
+        Binding("l", "toggle_local", "Local", show=False),
         Binding("d", "toggle_diff", "Diff"),
-        Binding("i", "toggle_info", "Info"),
-        Binding("s", "toggle_split", "Split"),
+        Binding("i", "toggle_info", "Info", show=False),
+        Binding("s", "toggle_split", "Split", show=False),
         Binding("w", "toggle_wrap", "Wrap", show=False),
         # 数字キーでタブ切り替え（フッターには表示しない）
         Binding("1", "toggle_backup", "Tab 1", show=False),
@@ -138,28 +140,28 @@ class TritonTUIApp(App):
         Binding("3", "toggle_diff", "Tab 3", show=False),
         Binding("4", "toggle_info", "Tab 4", show=False),
         Binding("5", "toggle_split", "Tab 5", show=False),
-        Binding("D", "open_vscode_diff", "VSCode Diff"),
-        Binding("E", "open_vscode_edit", "Edit in VSCode"),
+        Binding("D", "open_vscode_diff", "VSCode Diff", show=False),
+        Binding("E", "open_vscode_edit", "Edit in VSCode", show=False),
         # アクション
         Binding("R", "restore_files", "Restore"),
-        Binding("x", "export_files", "Export"),
+        Binding("x", "export_files", "Export", show=False),
         Binding("B", "backup", "Backup"),
-        Binding("P", "git_pull", "Git Pull"),
-        Binding("C", "git_commit_push", "Git Commit Push"),
+        Binding("P", "git_pull", "Git Pull", show=False),
+        Binding("C", "git_commit_push", "Commit Push"),
         Binding("ctrl+r", "refresh", "Refresh", show=False),
         # マシン選択
-        Binding("m", "select_machine", "Select Machine"),
+        Binding("m", "select_machine", "Machine"),
         # ファイル操作
-        Binding("F", "show_in_finder", "Finder"),
+        Binding("F", "show_in_finder", "Finder", show=False),
         # クリップボード
-        Binding("c", "copy_to_clipboard", "Copy"),
+        Binding("c", "copy_to_clipboard", "Copy", show=False),
         # vim 流の yank: c と同じ挙動（フッターには出さない）
         Binding("y", "copy_to_clipboard", "Yank", show=False),
         # 選択モード（マウスでテキスト選択して通常のクリップボードコピー）
-        Binding("v", "enter_select_mode", "Select"),
+        Binding("v", "enter_select_mode", "Select", show=False),
         Binding("escape", "exit_select_mode", "Exit Select", show=False),
         # UI 操作
-        Binding("t", "toggle_left_pane", "Toggle Pane"),
+        Binding("t", "toggle_left_pane", "Toggle Pane", show=False),
     ]
 
     def compose(self) -> ComposeResult:
@@ -254,6 +256,7 @@ class TritonTUIApp(App):
 
         section("File Operations")
         key_line("Space", "Toggle file selection")
+        key_line("A", "Deselect all files")
         key_line("R", "Restore selected files")
         key_line("x", "Export selected files")
         key_line("B", "Backup current machine")

@@ -259,8 +259,9 @@ class FileList(Vertical):
 
     BINDINGS = [
         Binding("/", "focus_filter", "Filter"),
-        Binding("-", "toggle_dividers", "Toggle Dividers"),
-        Binding(".", "toggle_changed_filter", "Changed Only"),
+        Binding("-", "toggle_dividers", "Toggle Dividers", show=False),
+        Binding(".", "toggle_changed_filter", "Changed Only", show=False),
+        Binding("A", "deselect_all", "Deselect All", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -680,6 +681,16 @@ class FileList(Vertical):
         """すべてのファイルの選択を解除"""
         self.selected_files.clear()
         self._update_list_view()
+        self._update_header()
+
+    def action_deselect_all(self) -> None:
+        """全選択解除（Aキー）"""
+        count = len(self.selected_files)
+        if count == 0:
+            self.app.notify("No files selected", severity="warning")
+            return
+        self.deselect_all()
+        self.app.notify(f"Deselected {count} file(s)")
 
     def get_current_file(self) -> Optional[Dict]:
         """現在選択されているファイルを取得

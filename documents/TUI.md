@@ -98,6 +98,7 @@ triton archive clean --keep 5    # Keep only latest 5 archives
 |-----|--------|
 | `↑` / `↓` | Move cursor |
 | `Space` | Toggle file selection |
+| `A` | Deselect all files |
 | `m` | Switch machine |
 | `/` | Search files (incremental) |
 | `?` | Show help |
@@ -107,11 +108,12 @@ triton archive clean --keep 5    # Keep only latest 5 archives
 
 | Key | Mode | Description |
 |-----|------|-------------|
-| `p` / `1` | Preview | Repository file content |
+| `b` / `1` | Backup | Repository file content |
 | `l` / `2` | Local | Local file content |
-| `d` / `3` | Diff | Unified diff (local vs repository) |
+| `d` / `3` | Diff | Unified diff (repository vs local) |
 | `i` / `4` | Info | File details and sync status |
 | `s` / `5` | Split | Side-by-side comparison |
+| `w` | - | Toggle word wrap (horizontal scroll when off) |
 
 ### Actions
 
@@ -150,6 +152,7 @@ Select mode swaps the rich preview for a read-only TextArea so the user can mous
 | `F` | Show in Finder (macOS) |
 | `t` | Toggle left pane |
 | `-` | Group files by target |
+| `.` | Show changed files only |
 
 ---
 
@@ -190,6 +193,22 @@ Select mode swaps the rich preview for a read-only TextArea so the user can mous
 
 - Checkbox checked - File selected for batch operations
 - Checkbox empty - File not selected
+
+### Repository Drift Indicator
+
+The status bar (bottom) shows a persistent warning while the repository is
+out of sync. It disappears only when everything is committed, pushed, and
+up to date:
+
+| Indicator | Meaning | Resolution |
+|-----------|---------|------------|
+| `● N uncommitted` | Repository has uncommitted changes (e.g. after backup) | Press `C` to commit & push |
+| `↑N unpushed` | Local commits not pushed to remote | Press `C` to commit & push |
+| `↓N behind` | Remote has newer commits | Press `P` to pull |
+
+In a sync tool, drift is the real risk: a dirty repository blocks startup
+auto-pull, and unpushed commits invite conflicts between machines. The
+indicator keeps that state visible so you can complete the sync at any time.
 
 ---
 
