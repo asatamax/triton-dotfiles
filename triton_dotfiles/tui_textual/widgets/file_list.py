@@ -649,10 +649,45 @@ class FileList(Vertical):
             return None
         return "/".join(parts[: len(parts) - level]) + "/"
 
+    def _matched_for_level(self, level: int) -> Set[int]:
+        """levelの拡大範囲に含まれるファイルインデックス（ベース選択を除く）
+
+        level 0はアンカー行のみ。level 1以上は対応するプレフィックス配下の
+        表示中ファイル（フィルタ適用後）すべて。
+        """
+        if level <= 0:
+            return {self._expand_anchor_index}
+
+        prefix = self._prefix_for_level(self._expand_anchor, level)
+        matched = {
+            self._index_by_id[id(f)]
+            for f in self.filtered_files
+            if f["name"].startswith(prefix)
+        }
+        matched.add(self._expand_anchor_index)
+        return matched
+
+    def _apply_expand_level(self, matched: Set[int]) -> None:
+        """拡大レベルの選択結果を反映して通知"""
+        self.selected_files = set(self._expand_base) | matched
+
+        if self._expand_level == 0:
+            scope_label = self._expand_anchor
+        else:
+            scope_label = self._prefix_for_level(
+                self._expand_anchor, self._expand_level
+            )
+
+        self._refresh_selection_display()
+        self._update_header()
+        self.app.notify(f"▸ {scope_label} ({len(matched)} file(s))", timeout=2)
+
     def action_expand_selection(self) -> None:
         """選択をカーソル行の親ディレクトリへ段階的に拡大（>キー）
 
         押すたびに references/ → aaa/ → skills/ → ... と1階層ずつ広がる。
+        選択結果が変わらない階層（1ファイルだけのディレクトリ等）はスキップし、
+        押すたびに必ず変化があるようにする。
         既存の選択はベースとして保持されるため、別の場所へカーソルを移して
         再度拡大すれば複数グループの選択を累積できる。
         """
@@ -669,48 +704,59 @@ class FileList(Vertical):
             self._expand_level = 0
             self._expand_base = set(self.selected_files)
 
-        if self._prefix_for_level(anchor, self._expand_level + 1) is None:
-            if self._expand_level == 0:
-                self.app.notify(
-                    "No parent directory to expand into", severity="warning"
-                )
-            else:
-                self.app.notify("Already at top level", severity="warning")
-            return
+        max_level = len(anchor.split("/")) - 1
+        current_selection = set(self.selected_files)
+        level = self._expand_level
 
-        self._expand_level += 1
-        self._apply_expand_level()
+        while level < max_level:
+            level += 1
+            matched = self._matched_for_level(level)
+            if set(self._expand_base) | matched != current_selection:
+                self._expand_level = level
+                self._apply_expand_level(matched)
+                return
+
+        if max_level == 0:
+            self.app.notify("No parent directory to expand into", severity="warning")
+        else:
+            self.app.notify("Already at top level", severity="warning")
 
     def action_shrink_selection(self) -> None:
-        """拡大した選択をカーソル行に向かって1段階縮小（<キー）"""
-        if self._expand_anchor is None or self._expand_level == 0:
+        """拡大した選択をカーソル行に向かって段階的に縮小（<キー）
+
+        アンカー行のみ（1 selected）からさらに縮小すると、シーケンス開始前の
+        選択状態まで完全に巻き戻る（選択なしから始めたなら選択なしへ）。
+        """
+        if self._expand_anchor is None:
             self.app.notify("No expanded selection to shrink", severity="warning")
             return
-        self._expand_level -= 1
-        self._apply_expand_level()
 
-    def _apply_expand_level(self) -> None:
-        """現在の拡大レベルに応じて選択状態を再計算して表示"""
-        if self._expand_level == 0:
-            self.selected_files = set(self._expand_base) | {self._expand_anchor_index}
-            scope_label = self._expand_anchor
-            matched_count = 1
+        current_selection = set(self.selected_files)
+        level = self._expand_level
+
+        while level > 0:
+            level -= 1
+            matched = self._matched_for_level(level)
+            if set(self._expand_base) | matched != current_selection:
+                self._expand_level = level
+                self._apply_expand_level(matched)
+                return
+
+        # アンカー行まで縮小済み → シーケンス開始前の状態へ完全に巻き戻す
+        base = set(self._expand_base)
+        self._reset_expand_sequence()
+        if base != current_selection:
+            self.selected_files = base
+            self._refresh_selection_display()
+            self._update_header()
+            if base:
+                self.app.notify(
+                    f"Restored pre-expand selection ({len(base)} file(s))", timeout=2
+                )
+            else:
+                self.app.notify("Selection cleared", timeout=2)
         else:
-            prefix = self._prefix_for_level(self._expand_anchor, self._expand_level)
-            # フィルタ表示中のファイルのみ対象（select系の既存挙動と整合）
-            matched = {
-                self._index_by_id[id(f)]
-                for f in self.filtered_files
-                if f["name"].startswith(prefix)
-            }
-            matched.add(self._expand_anchor_index)
-            self.selected_files = set(self._expand_base) | matched
-            scope_label = prefix
-            matched_count = len(matched)
-
-        self._refresh_selection_display()
-        self._update_header()
-        self.app.notify(f"▸ {scope_label} ({matched_count} file(s))", timeout=2)
+            self.app.notify("No expanded selection to shrink", severity="warning")
 
     def select_all(self) -> None:
         """すべてのファイルを選択（フィルタ中は表示されているファイルのみ）"""

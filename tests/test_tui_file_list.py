@@ -61,9 +61,7 @@ async def test_expand_selection_widens_step_by_step():
         await pilot.press(">")  # skills/
         assert file_list.selected_files == {0, 1, 2, 3}
 
-        await pilot.press(">")  # .claude/
-        assert file_list.selected_files == {0, 1, 2, 3}
-
+        # .claude/ はskills/と同じ選択結果になるためスキップされ、
         # トップレベルで打ち止め（全ファイル選択には拡大しない）
         await pilot.press(">")
         assert file_list.selected_files == {0, 1, 2, 3}
@@ -87,15 +85,16 @@ async def test_shrink_selection_steps_back_toward_cursor():
         await pilot.press("<")  # aaa/
         assert file_list.selected_files == {0, 1, 2}
 
-        await pilot.press("<")  # references/
+        await pilot.press("<")  # references/ = カーソル行のみ
         assert file_list.selected_files == {1}
 
-        await pilot.press("<")  # カーソル行のみ
-        assert file_list.selected_files == {1}
+        # さらに縮小するとシーケンス開始前の状態（選択なし）へ巻き戻る
+        await pilot.press("<")
+        assert file_list.selected_files == set()
 
         # それ以上は縮小できない（クラッシュしない）
         await pilot.press("<")
-        assert file_list.selected_files == {1}
+        assert file_list.selected_files == set()
 
 
 async def test_expand_accumulates_across_anchors():
@@ -116,6 +115,28 @@ async def test_expand_accumulates_across_anchors():
         await pilot.pause()
         await pilot.press(">")  # bbb/
         assert file_list.selected_files == {0, 1, 2, 3}
+
+
+async def test_shrink_unwinds_to_pre_expand_selection():
+    """拡大前に選択していたファイルは完全巻き戻し後も残る"""
+    app = FileListHostApp()
+    async with app.run_test() as pilot:
+        file_list = await _load(pilot, app)
+
+        # .zshrcを事前に選択してから aaa を拡大
+        file_list.toggle_file_selection(4)
+        file_list.list_view.index = 1
+        await pilot.pause()
+
+        await pilot.press(">")  # references/
+        assert file_list.selected_files == {1, 4}
+        await pilot.press(">")  # aaa/
+        assert file_list.selected_files == {0, 1, 2, 4}
+
+        await pilot.press("<")  # references/
+        assert file_list.selected_files == {1, 4}
+        await pilot.press("<")  # 完全巻き戻し → 事前選択のみ残る
+        assert file_list.selected_files == {4}
 
 
 async def test_expand_on_top_level_file_warns():
