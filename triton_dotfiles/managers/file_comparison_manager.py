@@ -420,6 +420,81 @@ class FileComparisonManager:
 
         return result
 
+    def generate_local_backup_diff(
+        self,
+        local_path: Path,
+        backup_path: Path,
+        encrypted: bool,
+        display_name: str,
+    ) -> Dict[str, any]:
+        """ローカルとバックアップの内容差分（unified diff）を生成する。
+
+        backup→local方向で生成するため、ローカルでの追記が「+」になる
+        （AHEAD = ローカルが新しい、の意味論と一致）。
+        暗号化ファイルは復号して比較する。
+
+        Args:
+            local_path: ローカルファイルのパス
+            backup_path: バックアップ（リポジトリ）ファイルのパス
+            encrypted: バックアップが暗号化されているか
+            display_name: diffヘッダーに表示するファイル名
+
+        Returns:
+            diff_lines / has_changes / line_count / error（エラー時のみ）
+        """
+        import difflib
+
+        def _error(message: str) -> Dict[str, any]:
+            return {
+                "diff_lines": [message],
+                "has_changes": True,
+                "line_count": 1,
+                "error": message,
+            }
+
+        # バックアップ側の内容を取得（暗号化ファイルは復号）
+        if encrypted:
+            try:
+                if not self.encryption_manager:
+                    raise RuntimeError("Encryption manager not available")
+                backup_content = self.encryption_manager.decrypt_file_content(
+                    str(backup_path)
+                )
+                backup_lines = backup_content.decode(
+                    "utf-8", errors="replace"
+                ).splitlines()
+            except Exception as e:
+                return _error(f"Error decrypting backup file: {str(e)}")
+        else:
+            try:
+                with open(backup_path, "r", encoding="utf-8", errors="replace") as f:
+                    backup_lines = f.read().splitlines()
+            except Exception as e:
+                return _error(f"Error reading backup file: {str(e)}")
+
+        try:
+            with open(local_path, "r", encoding="utf-8", errors="replace") as f:
+                local_lines = f.read().splitlines()
+        except Exception as e:
+            return _error(f"Error reading local file: {str(e)}")
+
+        diff_lines = list(
+            difflib.unified_diff(
+                backup_lines,
+                local_lines,
+                fromfile=f"backup/{display_name}",
+                tofile=f"local/{display_name}",
+                lineterm="",
+            )
+        )
+
+        has_changes = len(diff_lines) > 0
+        return {
+            "diff_lines": diff_lines if has_changes else ["No differences found"],
+            "has_changes": has_changes,
+            "line_count": len(diff_lines),
+        }
+
     def get_cache_stats(self) -> Dict[str, int]:
         """Get cache statistics."""
         return {
