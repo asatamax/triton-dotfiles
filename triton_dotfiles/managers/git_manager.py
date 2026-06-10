@@ -25,6 +25,103 @@ class GitManager:
         """Check if the path is a git repository."""
         return (self.repo_root / ".git").exists()
 
+    def get_remote_url(self) -> str:
+        """
+        Get the origin remote URL of the repository.
+
+        Returns:
+            Remote URL string, or empty string if unavailable.
+        """
+        if not self.is_git_repository():
+            return ""
+
+        try:
+            result = self._run_git_command(["remote", "get-url", "origin"], timeout=10)
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+
+        return ""
+
+    @staticmethod
+    def clone_repository(url: str, dest_path: Path) -> Dict[str, Any]:
+        """
+        Clone a remote repository to the destination path.
+
+        Args:
+            url: Remote repository URL.
+            dest_path: Local destination directory (must not be a non-empty
+                non-repository directory).
+
+        Returns:
+            Dictionary with execution results:
+            - success: Whether the clone succeeded.
+            - message: Status description message.
+            - output: Command output.
+            - error: Error details if any.
+        """
+        dest_path = Path(dest_path)
+
+        if (dest_path / ".git").exists():
+            return {
+                "success": False,
+                "message": f"Already a git repository: {dest_path}",
+                "output": "",
+                "error": "ALREADY_CLONED",
+            }
+
+        if dest_path.exists() and any(dest_path.iterdir()):
+            return {
+                "success": False,
+                "message": f"Directory exists and is not empty: {dest_path}",
+                "output": "",
+                "error": "DEST_NOT_EMPTY",
+            }
+
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                ["git", "clone", url, str(dest_path)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+
+            success = result.returncode == 0
+            return {
+                "success": success,
+                "message": (
+                    f"Cloned repository to {dest_path}"
+                    if success
+                    else f"Git clone failed: {result.stderr.strip()}"
+                ),
+                "output": result.stdout,
+                "error": "" if success else result.stderr,
+            }
+
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "message": "Git clone timed out after 300 seconds",
+                "output": "",
+                "error": "Command timed out",
+            }
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "message": "Git command not found. Please install git.",
+                "output": "",
+                "error": "git command not found in PATH",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"Git clone failed: {str(e)}",
+                "output": "",
+                "error": str(e),
+            }
+
     def is_working_directory_clean(self) -> Dict[str, Any]:
         """
         Check if the working directory is clean.
