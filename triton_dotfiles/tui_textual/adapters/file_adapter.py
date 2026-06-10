@@ -55,6 +55,28 @@ class TUIFileAdapter:
             self.config.tui.system_file_patterns,
         )
 
+    def ensure_current_machine_folder(self):
+        """自マシンのフォルダをリポジトリ内に確保する。
+
+        参加直後（バックアップ未実施）でも自マシンがマシン一覧に必ず現れ、
+        他マシンへの意図しないフォールバック表示を防ぐ。
+
+        Returns:
+            作成（または既存確認）したPath。リポジトリ不在時はNone。
+        """
+        try:
+            machine_name = self.config_manager.get_machine_name()
+            return self.file_manager.ensure_machine_backup_dir(machine_name)
+        except Exception:
+            return None
+
+    def get_current_machine_name(self):
+        """現在のマシン名を取得（取得失敗時はNone）"""
+        try:
+            return self.config_manager.get_machine_name()
+        except Exception:
+            return None
+
     def get_available_machines(self):
         """利用可能なマシン一覧を取得"""
         repo_path = self.get_repository_path()

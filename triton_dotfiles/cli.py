@@ -126,12 +126,18 @@ def cli(ctx, triton_dir, version, skip_startup):
             _show_config_error(error, config_path)
             sys.exit(1)
 
+        # Block TUI launch when the vault has not been cloned yet
+        missing_vault = _get_missing_vault_path(config_path)
+        if missing_vault:
+            _show_vault_missing_guidance(missing_vault)
+            sys.exit(1)
+
         # Launch TUI when config is valid
         _launch_default_tui(skip_startup=skip_startup)
         return
 
     # Commands that don't require config.yml
-    config_optional_commands = {"init"}
+    config_optional_commands = {"init", "join"}
 
     if ctx.invoked_subcommand in config_optional_commands:
         # Skip config file check for init and similar commands
@@ -227,6 +233,41 @@ def _validate_config_for_tui(config_path: str) -> str | None:
         return f"YAML parse error: {e}"
     except Exception as e:
         return f"Failed to read config: {e}"
+
+
+def _get_missing_vault_path(config_path: str) -> Path | None:
+    """Return the configured vault path when it does not exist locally.
+
+    Returns None when the vault exists or the path cannot be determined
+    (format errors are handled by _validate_config_for_tui).
+    """
+    from .wizard_common import read_repository_path_from_config
+
+    vault_path = read_repository_path_from_config(Path(config_path))
+    if vault_path is not None and not vault_path.exists():
+        return vault_path
+    return None
+
+
+def _show_vault_missing_guidance(vault_path: Path):
+    """Guide the user to join or init when the vault is missing."""
+    click.echo(f"{Fore.RED}Error: Vault not found: {vault_path}{Style.RESET_ALL}")
+    click.echo()
+    click.echo("Your config points to a vault that does not exist on this machine.")
+    click.echo()
+    click.echo(
+        f"  {Fore.CYAN}If you already use triton on another machine:{Style.RESET_ALL}"
+    )
+    click.echo(
+        f"    {Fore.GREEN}triton join{Style.RESET_ALL}            "
+        "# clone your vault and register this machine"
+    )
+    click.echo()
+    click.echo(f"  {Fore.CYAN}If this is your first triton setup:{Style.RESET_ALL}")
+    click.echo(
+        f"    {Fore.GREEN}triton init{Style.RESET_ALL}            # create a new vault"
+    )
+    click.echo()
 
 
 def _show_config_error(error: str, config_path: str):
@@ -520,6 +561,11 @@ def status(ctx):
         file_manager = FileManager(config_manager)
         machine_name = config_manager.get_machine_name()
 
+        # Setup diagnostics (checklist shown only when something is missing)
+        _show_setup_diagnostics(
+            ctx.obj["config_path"], config_manager, file_manager, machine_name
+        )
+
         # Machine & Config
         click.echo(f"{Fore.CYAN}Machine:{Style.RESET_ALL} {machine_name}")
         click.echo(f"{Fore.CYAN}Config:{Style.RESET_ALL} {ctx.obj['config_path']}")
@@ -576,6 +622,77 @@ def status(ctx):
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
+
+
+def _show_setup_diagnostics(
+    config_path: str,
+    config_manager,
+    file_manager,
+    machine_name: str,
+) -> None:
+    """Show a setup checklist when the machine is not fully onboarded.
+
+    Detects the "joined the vault halfway" states (vault not cloned,
+    master.key missing, no machine folder yet) and points to the command
+    that fixes them. Prints nothing extra when setup is complete.
+    """
+    triton_dir = get_triton_dir()
+    key_path = triton_dir / "master.key"
+    repo_root = file_manager.repo_root
+    machine_dir = file_manager.get_backup_dir(machine_name)
+
+    encryption_enabled = config_manager.config.encryption.enabled
+    vault_missing = not repo_root.exists()
+    key_missing = encryption_enabled and not key_path.exists()
+    machine_dir_missing = not vault_missing and not machine_dir.exists()
+
+    if not (vault_missing or key_missing or machine_dir_missing):
+        return
+
+    click.echo(f"{Fore.CYAN}Setup:{Style.RESET_ALL}")
+    click.echo(f"  {Fore.GREEN}✓{Style.RESET_ALL} Config:       {config_path}")
+
+    if not encryption_enabled:
+        click.echo(
+            f"  {Fore.YELLOW}!{Style.RESET_ALL} Master key:   encryption disabled"
+        )
+    elif key_missing:
+        click.echo(
+            f"  {Fore.RED}✗{Style.RESET_ALL} Master key:   {key_path} "
+            f"{Fore.RED}(not found){Style.RESET_ALL}"
+        )
+    else:
+        click.echo(f"  {Fore.GREEN}✓{Style.RESET_ALL} Master key:   {key_path}")
+
+    if vault_missing:
+        click.echo(
+            f"  {Fore.RED}✗{Style.RESET_ALL} Vault:        {repo_root} "
+            f"{Fore.RED}(not found){Style.RESET_ALL}"
+        )
+    else:
+        click.echo(f"  {Fore.GREEN}✓{Style.RESET_ALL} Vault:        {repo_root}")
+
+    if machine_dir_missing:
+        click.echo(
+            f"  {Fore.YELLOW}!{Style.RESET_ALL} This machine: no folder in vault yet"
+        )
+
+    click.echo()
+    if vault_missing:
+        click.echo(
+            f"  → Run '{Fore.GREEN}triton join{Style.RESET_ALL}' to clone your vault"
+            " and register this machine."
+        )
+    elif machine_dir_missing:
+        click.echo(
+            f"  → Run '{Fore.GREEN}triton join{Style.RESET_ALL}' to register this"
+            " machine, or 'triton backup' to create its first backup."
+        )
+    if key_missing:
+        click.echo(
+            "  → Copy master.key from another machine to restore encrypted files."
+        )
+    click.echo()
 
 
 def _get_git_status_string(file_manager: FileManager) -> str:
@@ -704,6 +821,11 @@ def init_cmd(ctx, non_interactive, vault_path, show_schema):
 
     # Only run wizard if no subcommand is specified
     if ctx.invoked_subcommand is None:
+        # Branch between creating a new vault and joining an existing one
+        if not non_interactive and _prompt_init_or_join() == "join":
+            _run_join_wizard_or_exit()
+            return
+
         from .init_wizard import run_wizard
 
         result = run_wizard(
@@ -716,6 +838,44 @@ def init_cmd(ctx, non_interactive, vault_path, show_schema):
                 for error in result.errors:
                     click.echo(f"{Fore.RED}Error: {error}{Style.RESET_ALL}")
             sys.exit(1)
+
+
+def _prompt_init_or_join() -> str:
+    """Ask whether to create a new vault or join an existing one."""
+    click.echo()
+    click.echo("What would you like to do?")
+    click.echo()
+    click.echo(
+        f"  {Fore.CYAN}[1]{Style.RESET_ALL} Create a new vault (this is my first machine)"
+    )
+    click.echo(
+        f"  {Fore.CYAN}[2]{Style.RESET_ALL} Join an existing vault"
+        " (I already use triton on another machine)"
+    )
+    click.echo()
+
+    choice = click.prompt("Choice", type=click.IntRange(1, 2), default=1)
+    return "join" if choice == 2 else "create"
+
+
+def _run_join_wizard_or_exit(
+    repo_url: str | None = None,
+    vault_path: str | None = None,
+    non_interactive: bool = False,
+):
+    """Run the join wizard and exit with an error code on failure."""
+    from .join_wizard import run_join_wizard
+
+    result = run_join_wizard(
+        repo_url=repo_url,
+        vault_path=vault_path,
+        non_interactive=non_interactive,
+    )
+
+    if not result.success:
+        for error in result.errors:
+            click.echo(f"{Fore.RED}Error: {error}{Style.RESET_ALL}")
+        sys.exit(1)
 
 
 @init_cmd.command("config")
@@ -804,6 +964,48 @@ def init_key(output, force):
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
+
+
+# =============================================================================
+# Join Command
+# =============================================================================
+
+
+@cli.command()
+@click.argument("repo_url", required=False)
+@click.option(
+    "--vault-path",
+    "-v",
+    help="Local vault path (default: from config.yml or prompt)",
+)
+@click.option(
+    "--non-interactive",
+    "-y",
+    is_flag=True,
+    help="Use defaults, no prompts (requires REPO_URL or an existing clone)",
+)
+def join(repo_url, vault_path, non_interactive):
+    """Join an existing triton vault (set up an additional machine).
+
+    Clones your vault repository, verifies your encryption key against it,
+    and registers this machine. Nothing is restored or backed up here:
+    browse the vault in the TUI afterwards and restore only the files you
+    need (selective restore), then press B for this machine's first backup.
+
+    \b
+    Typical flow on a new machine:
+      1. Copy master.key (and optionally config.yml) to ~/.config/triton
+      2. triton join git@github.com:you/dotfiles-vault.git
+      3. triton   # browse machines, restore selectively in the TUI
+
+    \b
+    Re-running join is safe: an existing clone is detected and reused.
+    """
+    _run_join_wizard_or_exit(
+        repo_url=repo_url,
+        vault_path=vault_path,
+        non_interactive=non_interactive,
+    )
 
 
 @cli.command("git-pull")

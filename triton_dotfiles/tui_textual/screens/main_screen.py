@@ -89,38 +89,36 @@ class MainScreen(Static):
 
     def _load_initial_data(self) -> None:
         """Load initial data."""
+        # 自マシンフォルダを確保（参加直後でも自マシンが一覧に必ず現れるように）
+        self.file_adapter.ensure_current_machine_folder()
+
         # マシン一覧を取得
         self.machines = self.file_adapter.get_available_machines()
 
         if not self.machines:
-            # マシンが見つからない場合
+            # マシンが見つからない場合（リポジトリ不在・読み取り不可など）
             self.file_list.load_files("No Machines", [])
             welcome_text = (
-                "[$warning bold]No backup data found in repository.[/]\n\n"
-                "Please create a backup with:\n"
+                "[$warning bold]No machines found in repository.[/]\n\n"
+                "If you already use triton on another machine:\n"
                 "1. Exit TUI with [bold]q[/bold]\n"
-                "2. Create backup with [bold]triton backup[/bold]\n"
-                "3. Launch again with [bold]triton[/bold]"
+                "2. Run [bold]triton join[/bold] to connect to your vault\n\n"
+                "Otherwise create a backup with [bold]triton backup[/bold]\n"
+                "and launch again with [bold]triton[/bold]"
             )
             self.content_viewer.query_one("#backup-display").update(welcome_text)
 
             return
 
-        # 自分自身のマシンがあればそれを優先選択、なければ最初のマシンを選択
-        self.current_machine_index = 0  # デフォルト
+        # 必ず自マシンを初期選択する（他マシンへの黙ったフォールバックはしない）
+        self.current_machine_index = 0  # マシン名取得失敗時のみのフォールバック
 
-        try:
-            # 現在のマシン名を取得
-            current_machine_name = self.file_adapter.config_manager.get_machine_name()
-
-            # 自分自身のマシンを探す
+        current_machine_name = self.file_adapter.get_current_machine_name()
+        if current_machine_name:
             for i, machine in enumerate(self.machines):
                 if machine["name"] == current_machine_name:
                     self.current_machine_index = i
                     break
-        except Exception:
-            # マシン名取得に失敗した場合はデフォルト（0）のまま
-            pass
 
         self.current_machine = self.machines[self.current_machine_index]
         self._load_files_for_current_machine()
@@ -177,6 +175,17 @@ class MainScreen(Static):
                 "Use arrow keys to navigate\n"
                 "Press Space to select files\n"
                 "Press '?' for help"
+            )
+        elif (
+            self.current_machine["name"] == self.file_adapter.get_current_machine_name()
+        ):
+            # 自マシンが空 = 参加直後。バックアップは強制せず、選択肢を提示する
+            welcome_text = (
+                "[$warning bold]No backups yet for this machine.[/]\n\n"
+                "[bold]B[/bold]    Create your first backup\n"
+                "[bold]m[/bold]    Select another machine to restore from\n\n"
+                "Tip: restore selectively (e.g. .ssh, .zshrc) rather\n"
+                "than everything at once."
             )
         else:
             welcome_text = (

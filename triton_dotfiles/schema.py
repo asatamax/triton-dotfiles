@@ -1081,6 +1081,46 @@ INIT_SCHEMA: dict[str, Any] = {
             ],
             "warning": "Overwriting an existing key will make all previously encrypted files unrecoverable",
         },
+        "join": {
+            "description": "Join an existing vault from an additional machine "
+            "(top-level command: 'triton join', not an init subcommand). "
+            "Clones the vault repository, verifies the encryption key against it, "
+            "and registers this machine. Does NOT restore or backup anything: "
+            "restore is selective and done in the TUI afterwards.",
+            "arguments": {
+                "REPO_URL": {
+                    "type": "string",
+                    "required": False,
+                    "description": "Remote vault repository URL to clone "
+                    "(prompted interactively when omitted and no clone exists)",
+                },
+            },
+            "options": {
+                "--vault-path, -v": {
+                    "type": "string",
+                    "description": "Local vault path (default: repository.path from config.yml)",
+                },
+                "--non-interactive, -y": {
+                    "type": "flag",
+                    "description": "Use defaults, no prompts. Fails instead of asking "
+                    "(e.g. on machine name conflicts or key mismatch)",
+                },
+            },
+            "examples": [
+                "triton join git@github.com:you/dotfiles-vault.git",
+                "triton join",
+                "triton join -y git@github.com:you/dotfiles-vault.git",
+            ],
+            "prerequisites": [
+                "master.key copied to ~/.config/triton (required to decrypt files)",
+                "config.yml copied to ~/.config/triton (optional; a minimal one is created otherwise)",
+            ],
+            "notes": [
+                "Idempotent: an existing clone at the vault path is detected and reused",
+                "Verifies master.key by test-decrypting an .enc file in the vault",
+                "Creates an empty machine folder so the TUI shows this machine immediately",
+            ],
+        },
     },
     "workflows": {
         "new_user_setup": {
@@ -1105,6 +1145,32 @@ INIT_SCHEMA: dict[str, Any] = {
                     "step": 4,
                     "command": "triton git-commit-push",
                     "purpose": "Commit and push to remote repository",
+                },
+            ],
+        },
+        "additional_machine_setup": {
+            "description": "Recommended workflow for joining an existing vault "
+            "from a new/additional machine",
+            "steps": [
+                {
+                    "step": 1,
+                    "command": "(manual) copy master.key to ~/.config/triton/",
+                    "purpose": "Transfer the encryption key offline (password manager, USB, scp)",
+                },
+                {
+                    "step": 2,
+                    "command": "triton join <repo-url>",
+                    "purpose": "Clone the vault, verify the key, register this machine",
+                },
+                {
+                    "step": 3,
+                    "command": "triton restore <other-machine> -f <files>",
+                    "purpose": "Selectively restore only needed files (or use the TUI)",
+                },
+                {
+                    "step": 4,
+                    "command": "triton backup",
+                    "purpose": "Create this machine's first backup when ready",
                 },
             ],
         },
