@@ -2,49 +2,18 @@
 File operations adapter for TUI
 """
 
-import atexit
 import os
-import shutil
-import tempfile
 from pathlib import Path
 from colorama import Fore, Style
+from ...managers.editor_manager import EditorManager
 from ...managers.file_comparison_manager import (
     FileComparisonManager,
     DuplicateDetectionMethod,
 )
 
-# VSCode diff用一時ディレクトリの管理
-# 復号済みコンテンツ（SSH鍵等）を含むため、確実に削除する必要がある
-_TEMP_DIFF_PREFIX = "triton_diff_"
-_temp_diff_dirs: list[str] = []
-
-
-def _cleanup_temp_diff_dirs() -> None:
-    """このプロセスが作成した復号済み一時ディレクトリを削除"""
-    while _temp_diff_dirs:
-        shutil.rmtree(_temp_diff_dirs.pop(), ignore_errors=True)
-
-
-atexit.register(_cleanup_temp_diff_dirs)
-
-
-def _sweep_stale_diff_dirs() -> None:
-    """過去セッションの一時ディレクトリ残骸を掃除
-
-    異常終了等でatexitが走らなかった場合、復号済み秘密情報が
-    /tmpに残り続けるため、起動時に必ず一掃する。
-    """
-    tmp_root = Path(tempfile.gettempdir())
-    for stale_dir in tmp_root.glob(f"{_TEMP_DIFF_PREFIX}*"):
-        if stale_dir.is_dir() and str(stale_dir) not in _temp_diff_dirs:
-            shutil.rmtree(stale_dir, ignore_errors=True)
-
 
 class TUIFileAdapter:
     """既存のFileManagerをTUI用にラップするアダプター"""
-
-    # VSCode系エディタの検出候補（優先順）
-    EDITOR_COMMANDS = ("code", "code-insiders", "cursor", "windsurf")
 
     def __init__(self):
         # 既存クラスを遅延インポート（循環インポート回避）
@@ -68,8 +37,8 @@ class TUIFileAdapter:
             self.file_manager.encryption_manager
         )
 
-        # 過去セッションの復号済み一時ファイルを掃除（セキュリティ）
-        _sweep_stale_diff_dirs()
+        # 外部エディタ統合（復号済み一時ファイルの掃除も初期化時に行われる）
+        self.editor_manager = EditorManager(self.file_manager.encryption_manager)
 
     def get_repository_path(self):
         """リポジトリパスを取得"""
@@ -111,17 +80,6 @@ class TUIFileAdapter:
             return self.config_manager.get_machine_name()
         except Exception:
             return None
-
-    def _find_editor_command(self) -> str | None:
-        """PATHから利用可能なVSCode系エディタコマンドを探す
-
-        `--version`の実行（1コマンドあたり最大数秒かかる）は行わず、
-        whichベースの存在チェックのみで判定する。
-        """
-        for cmd in self.EDITOR_COMMANDS:
-            if shutil.which(cmd):
-                return cmd
-        return None
 
     def get_available_machines(self):
         """利用可能なマシン一覧を取得"""
@@ -477,114 +435,48 @@ class TUIFileAdapter:
         return target_entries
 
     def get_file_diff(self, machine_id, file_info):
-        """ファイルの差分を取得"""
+        """ファイルの差分を取得（生成はFileComparisonManagerに委譲）"""
         try:
             backup_file_path = file_info["backup_path"]
             local_file_path = file_info["local_path"]
 
-            # バックアップファイルが存在しない場合
-            if not os.path.exists(backup_file_path):
+            base = {
+                "local_exists": file_info["local_exists"],
+                "encrypted": file_info["encrypted"],
+            }
+
+            if not backup_file_path or not os.path.exists(backup_file_path):
                 return {
                     "diff_lines": ["Backup file not found"],
                     "has_changes": True,
-                    "local_exists": file_info["local_exists"],
-                    "encrypted": file_info["encrypted"],
                     "line_count": 1,
+                    **base,
                 }
 
-            # ローカルファイルが存在しない場合
             if not os.path.exists(local_file_path):
                 return {
                     "diff_lines": ["Local file does not exist"],
                     "has_changes": True,
+                    "line_count": 1,
+                    **base,
                     "local_exists": False,
-                    "encrypted": file_info["encrypted"],
-                    "line_count": 1,
                 }
 
-            # バックアップファイルの内容を取得
-            if file_info["encrypted"]:
-                # 暗号化ファイルの場合は復号化
-                try:
-                    backup_content = (
-                        self.file_manager.encryption_manager.decrypt_file_content(
-                            backup_file_path
-                        )
-                    )
-                    backup_lines = backup_content.decode(
-                        "utf-8", errors="replace"
-                    ).splitlines()
-                except Exception as e:
-                    return {
-                        "diff_lines": [f"Error decrypting backup file: {str(e)}"],
-                        "has_changes": True,
-                        "local_exists": file_info["local_exists"],
-                        "encrypted": file_info["encrypted"],
-                        "line_count": 1,
-                    }
-            else:
-                # 通常ファイル
-                try:
-                    with open(
-                        backup_file_path, "r", encoding="utf-8", errors="replace"
-                    ) as f:
-                        backup_lines = f.read().splitlines()
-                except Exception as e:
-                    return {
-                        "diff_lines": [f"Error reading backup file: {str(e)}"],
-                        "has_changes": True,
-                        "local_exists": file_info["local_exists"],
-                        "encrypted": file_info["encrypted"],
-                        "line_count": 1,
-                    }
-
-            # ローカルファイルの内容を取得
-            try:
-                with open(
-                    local_file_path, "r", encoding="utf-8", errors="replace"
-                ) as f:
-                    local_lines = f.read().splitlines()
-            except Exception as e:
-                return {
-                    "diff_lines": [f"Error reading local file: {str(e)}"],
-                    "has_changes": True,
-                    "local_exists": file_info["local_exists"],
-                    "encrypted": file_info["encrypted"],
-                    "line_count": 1,
-                }
-
-            # 差分を生成
-            # backup→localの方向: ローカルでの追記が「+」（緑）になり、
-            # Infoタブの AHEAD（ローカルが新しい）の意味論と一致する
-            import difflib
-
-            diff_lines = list(
-                difflib.unified_diff(
-                    backup_lines,
-                    local_lines,
-                    fromfile=f"backup/{file_info['name']}",
-                    tofile=f"local/{file_info['name']}",
-                    lineterm="",
-                )
+            diff = self.file_comparison_manager.generate_local_backup_diff(
+                Path(local_file_path),
+                Path(backup_file_path),
+                file_info["encrypted"],
+                file_info["name"],
             )
-
-            has_changes = len(diff_lines) > 0
-
-            return {
-                "diff_lines": diff_lines if has_changes else ["No differences found"],
-                "has_changes": has_changes,
-                "local_exists": file_info["local_exists"],
-                "encrypted": file_info["encrypted"],
-                "line_count": len(diff_lines),
-            }
+            return {**diff, **base}
 
         except Exception as e:
             return {
                 "diff_lines": [f"Error getting diff: {str(e)}"],
                 "has_changes": True,
+                "line_count": 1,
                 "local_exists": file_info["local_exists"],
                 "encrypted": file_info["encrypted"],
-                "line_count": 1,
             }
 
     def get_file_content_preview(self, machine_id, file_info, max_lines=20):
@@ -1153,159 +1045,26 @@ class TUIFileAdapter:
 
     def open_vscode_diff(self, file_info):
         """VSCodeでlocal vs databaseファイルの差分を表示"""
-        import subprocess
+        # ローカル専用ファイルはdiff対象のバックアップが存在しない
+        if file_info.get("local_only", False):
+            return {
+                "success": False,
+                "message": (
+                    "Cannot show diff for local-only file. Use 'Backup' to add "
+                    f"{file_info['name']} to repository first."
+                ),
+            }
 
-        try:
-            # ローカル専用ファイルの場合は特別な処理
-            if file_info.get("local_only", False):
-                return {
-                    "success": False,
-                    "message": f"Cannot show diff for local-only file. Use 'Backup' to add {file_info['name']} to repository first.",
-                }
-
-            local_path = file_info["local_path"]
-
-            # ローカルファイルの存在確認
-            if not os.path.exists(local_path):
-                return {
-                    "success": False,
-                    "message": f"Local file does not exist: {local_path}",
-                }
-
-            vscode_cmd = self._find_editor_command()
-            if not vscode_cmd:
-                return {
-                    "success": False,
-                    "message": "Code editor not found. Please install VS Code, VS Code Insiders, Cursor, or Windsurf and ensure the command is in PATH.",
-                }
-
-            # 一時ファイルを作成してdatabase版をエクスポート
-            # 復号済みコンテンツを含み得るためTUI終了時にatexitで削除される
-            temp_dir = tempfile.mkdtemp(prefix=_TEMP_DIFF_PREFIX)
-            _temp_diff_dirs.append(temp_dir)
-
-            # ファイル名から安全な一時ファイル名を作成
-            safe_filename = (
-                os.path.basename(file_info["name"]).replace("/", "_").replace("\\", "_")
-            )
-            temp_db_file = os.path.join(temp_dir, f"database_{safe_filename}")
-
-            # データベースファイルを一時ファイルにエクスポート
-            backup_file_path = file_info["backup_path"]
-
-            if file_info["encrypted"]:
-                # 暗号化ファイルの場合は復号化
-                try:
-                    decrypted_content = (
-                        self.file_manager.encryption_manager.decrypt_file_content(
-                            backup_file_path
-                        )
-                    )
-                    with open(temp_db_file, "wb") as f:
-                        f.write(decrypted_content)
-                except Exception as e:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    return {
-                        "success": False,
-                        "message": f"Error decrypting database file: {str(e)}",
-                    }
-            else:
-                # 通常ファイルの場合はコピー
-                try:
-                    shutil.copy2(backup_file_path, temp_db_file)
-                except Exception as e:
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    return {
-                        "success": False,
-                        "message": f"Error copying database file: {str(e)}",
-                    }
-
-            # 復号済みコンテンツを含み得るため所有者のみ読み書き可に制限
-            os.chmod(temp_db_file, 0o600)
-
-            # VSCode diff起動
-            try:
-                subprocess.Popen(
-                    [
-                        vscode_cmd,
-                        "--diff",
-                        local_path,  # Local (左側)
-                        temp_db_file,  # Database (右側)
-                    ],
-                    cwd=os.path.expanduser("~"),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-
-                # 一時ファイルはVSCodeが開いている間は残し、
-                # TUI終了時（atexit）と次回起動時のsweepで削除される
-                return {
-                    "success": True,
-                    "message": f"Opened {file_info['name']} in VSCode diff view",
-                    "temp_dir": temp_dir,  # クリーンアップ用
-                    "vscode_cmd": vscode_cmd,
-                }
-
-            except Exception as e:
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                return {
-                    "success": False,
-                    "message": f"Error launching VSCode: {str(e)}",
-                }
-
-        except Exception as e:
-            return {"success": False, "message": f"Error opening VSCode diff: {str(e)}"}
+        return self.editor_manager.open_diff(
+            file_info["local_path"],
+            file_info["backup_path"],
+            file_info["encrypted"],
+            file_info["name"],
+        )
 
     def open_vscode_edit(self, file_info):
         """VSCodeでローカルファイルを直接編集"""
-        import subprocess
-
-        try:
-            local_path = file_info["local_path"]
-
-            # ローカルファイルの存在確認
-            if not os.path.exists(local_path):
-                return {
-                    "success": False,
-                    "message": f"Local file does not exist: {local_path}",
-                }
-
-            vscode_cmd = self._find_editor_command()
-            if not vscode_cmd:
-                return {
-                    "success": False,
-                    "message": "Code editor not found. Please install VS Code, VS Code Insiders, Cursor, or Windsurf and ensure the command is in PATH.",
-                }
-
-            # VSCodeでローカルファイルを直接開く
-            try:
-                subprocess.Popen(
-                    [
-                        vscode_cmd,
-                        local_path,  # ローカルファイルを直接開く
-                    ],
-                    cwd=os.path.expanduser("~"),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-
-                return {
-                    "success": True,
-                    "message": f"Opened {file_info['name']} for editing in {vscode_cmd}",
-                    "vscode_cmd": vscode_cmd,
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "message": f"Error launching {vscode_cmd}: {str(e)}",
-                }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Error opening file for editing: {str(e)}",
-            }
+        return self.editor_manager.open_edit(file_info["local_path"], file_info["name"])
 
     def cleanup_repository_files(self, machine_name: str, dry_run: bool = False):
         """リポジトリから孤立ファイルを削除（ローカルに存在しないファイル）"""
