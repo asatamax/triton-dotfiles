@@ -262,6 +262,8 @@ class TritonTUIApp(App):
 
         section("File Operations")
         key_line("Space", "Toggle file selection")
+        key_line(">", "Expand selection to parent directory")
+        key_line("<", "Shrink expanded selection")
         key_line("A", "Deselect all files")
         key_line("R", "Restore selected files")
         key_line("x", "Export selected files")

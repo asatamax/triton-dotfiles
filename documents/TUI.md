@@ -98,6 +98,8 @@ triton archive clean --keep 5    # Keep only latest 5 archives
 |-----|--------|
 | `↑` / `↓` | Move cursor |
 | `Space` | Toggle file selection |
+| `>` | Expand selection to parent directory (press repeatedly to widen) |
+| `<` | Shrink expanded selection back toward the cursor file |
 | `A` | Deselect all files |
 | `m` | Switch machine |
 | `/` | Search files (incremental) |
