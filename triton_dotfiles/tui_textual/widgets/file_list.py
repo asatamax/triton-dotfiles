@@ -791,8 +791,9 @@ class FileList(Vertical):
             hasattr(self.list_view, "highlighted_child")
             and self.list_view.highlighted_child
         ):
-            original_index = self.list_view.highlighted_child.index
-            if 0 <= original_index < len(self.files):
+            # divider/spacer行はindexを持たないためファイル扱いしない
+            original_index = getattr(self.list_view.highlighted_child, "index", None)
+            if original_index is not None and 0 <= original_index < len(self.files):
                 return self.files[original_index]
         return None
 

@@ -151,6 +151,22 @@ class MainScreen(Static):
 
         self.current_machine = self.machines[self.current_machine_index]
         self._load_files_for_current_machine()
+        self.call_after_refresh(self._sync_content_viewer_to_selection)
+
+    def _sync_content_viewer_to_selection(self) -> None:
+        """コンテンツビューアを現在のハイライトに同期する
+
+        リスト再構築後にListView.Highlightedが発火しない（インデックス不変や
+        divider行ハイライト時）と、切替前のファイル内容・差分が残骸として
+        表示され続けるため、明示的に同期する。
+        """
+        current_file = self.file_list.get_current_file()
+        if current_file and self.current_machine:
+            self.content_viewer.update_content(current_file, self.current_machine["id"])
+            self._update_status_bar(current_file)
+        else:
+            self.content_viewer.clear_content()
+            self._update_status_bar(None)
 
     def _load_files_for_current_machine(self):
         """現在のマシンのファイル一覧を読み込み"""
@@ -323,6 +339,7 @@ class MainScreen(Static):
                 0,
             )
             self._load_files_for_current_machine()
+            self.call_after_refresh(self._sync_content_viewer_to_selection)
 
     async def restore_files(self):
         """ファイル復元を実行"""
