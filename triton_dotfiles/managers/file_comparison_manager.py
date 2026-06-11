@@ -429,8 +429,9 @@ class FileComparisonManager:
     ) -> Dict[str, any]:
         """ローカルとバックアップの内容差分（unified diff）を生成する。
 
-        backup→local方向で生成するため、ローカルでの追記が「+」になる
-        （AHEAD = ローカルが新しい、の意味論と一致）。
+        local→backup方向で生成し、「このバックアップをrestoreしたら
+        ローカルに何が起きるか」を表す（restoreで増える行が「+」、
+        消える行が「-」）。マシン選択に依存せず常に同じ意味論。
         暗号化ファイルは復号して比較する。
 
         Args:
@@ -480,10 +481,10 @@ class FileComparisonManager:
 
         diff_lines = list(
             difflib.unified_diff(
-                backup_lines,
                 local_lines,
-                fromfile=f"backup/{display_name}",
-                tofile=f"local/{display_name}",
+                backup_lines,
+                fromfile=f"local/{display_name} (current)",
+                tofile=f"backup/{display_name} (after restore)",
                 lineterm="",
             )
         )

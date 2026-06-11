@@ -112,7 +112,7 @@ triton archive clean --keep 5    # Keep only latest 5 archives
 |-----|------|-------------|
 | `b` / `1` | Backup | Repository file content |
 | `l` / `2` | Local | Local file content |
-| `d` / `3` | Diff | Unified diff (repository vs local) |
+| `d` / `3` | Diff | Unified diff showing what restore would change locally (`+` added, `-` removed) |
 | `i` / `4` | Info | File details and sync status |
 | `s` / `5` | Split | Side-by-side comparison |
 | `w` | - | Toggle word wrap (horizontal scroll when off) |

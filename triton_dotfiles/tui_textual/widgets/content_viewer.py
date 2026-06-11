@@ -355,6 +355,27 @@ class ContentViewer(Vertical):
             except Exception as e:
                 self.log.error(f"Failed to set view mode '{mode}': {e}")
 
+    def clear_content(self) -> None:
+        """ファイル未選択の状態に戻す
+
+        マシン切替やデータ再読み込みでハイライトが外れた際に、
+        切替前のファイル内容・差分が残骸として表示され続けるのを防ぐ。
+        """
+        self.current_file = None
+        placeholders = {
+            "#backup-display": "Select a file to view backup content",
+            "#local-display": "Select a file to view local content",
+            "#diff-display": "Select a file to view diff",
+            "#info-display": "Select a file to view info",
+            "#split-local-display": "",
+            "#split-backup-display": "",
+        }
+        for widget_id, placeholder in placeholders.items():
+            try:
+                self.query_one(widget_id, Static).update(placeholder)
+            except Exception:
+                pass
+
     def update_content(self, file_info: Dict, machine_id: str):
         """コンテンツを更新（全タブ対応）"""
         # Select mode is a per-file transient state; reset on file switch.
