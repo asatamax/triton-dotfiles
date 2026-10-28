@@ -14,7 +14,15 @@ from dataclasses import dataclass, field
 
 import yaml
 
-from .utils import get_triton_dir
+from .utils import (
+    direct_path_violation,
+    get_triton_dir,
+    is_direct_path,
+    machine_name_violation,
+)
+
+# direct path（"/"を含むglobでないfiles項目）に課す規則。検証・追加時のメッセージで共有する
+DIRECT_PATH_RULE = "direct paths must be relative and stay inside the backup directory"
 
 
 # --- Settings Key Definitions ---
@@ -460,6 +468,14 @@ class ConfigManager:
                                 f"✗Target {i}, file {j}: empty or invalid filename pattern"
                             )
 
+                if isinstance(target.files, list):
+                    for entry in self.find_invalid_direct_paths(
+                        target.path, target.files
+                    ):
+                        errors.append(
+                            f"✗Target {i}: invalid direct path {entry}; {DIRECT_PATH_RULE}"
+                        )
+
                 # encrypt_filesのバリデーション
                 if target.encrypt_files and not isinstance(target.encrypt_files, list):
                     errors.append(f"✗Target {i}: 'encrypt_files' must be a list")
@@ -487,6 +503,9 @@ class ConfigManager:
 
             except Exception as e:
                 errors.append(f"✗Target {i}: invalid path format: {e}")
+
+        # マシン名のチェック（リポジトリ直下の1要素として安全であること）
+        errors.extend(self._machine_name_errors())
 
         # リポジトリパスのチェック
         if not self.config.repository.path:
@@ -592,6 +611,57 @@ class ConfigManager:
                 return True
 
         return False
+
+    def _machine_name_errors(self) -> list[str]:
+        """設定または自動検出されたマシン名が安全なディレクトリ名でなければ✗エラーを返す"""
+        configured = self.config.repository.machine_name
+        if configured is not None:
+            violation = machine_name_violation(configured)
+            if violation:
+                message = (
+                    f"✗Invalid machine name '{configured}' "
+                    f"(repository.machine_name): {violation}"
+                )
+                return [message]
+            return []
+
+        if not self.config.repository.use_hostname:
+            return []
+
+        auto_name = get_machine_name_unified(use_hostname=True)
+        violation = machine_name_violation(auto_name)
+        if violation:
+            message = (
+                f"✗Auto-detected machine name '{auto_name}' cannot be used as a "
+                f"folder name ({violation}); set repository.machine_name in config.yml"
+            )
+            return [message]
+        return []
+
+    def find_invalid_direct_paths(
+        self, target_path: str, files: list[str] | None
+    ) -> list[str]:
+        """filesのうち、バックアップ先がマシンディレクトリ外になるdirect pathを検出
+
+        検証・target追加/変更・バックアップ（cleanup含む）で同じ判定
+        （utils.direct_path_violation）を使う。
+
+        Args:
+            target_path: 設定上のtargetのpath
+            files: targetのfilesリスト
+
+        Returns:
+            "'<entry>' (<reason>)" 形式の文字列のリスト（問題なければ空）
+        """
+        expanded = self.expand_path(target_path)
+        invalid = []
+        for entry in files or []:
+            if not isinstance(entry, str) or not is_direct_path(entry):
+                continue
+            reason = direct_path_violation(expanded, entry)
+            if reason:
+                invalid.append(f"'{entry}' ({reason})")
+        return invalid
 
     def is_file_too_large(self, file_path: Path) -> bool:
         """ファイルサイズが制限を超えているかチェック（0以下は制限なし）"""
@@ -1211,6 +1281,15 @@ class ConfigManager:
                 "message": "Non-recursive targets must specify files list",
             }
 
+        invalid = self.find_invalid_direct_paths(
+            path if "${" in path else normalized, files
+        )
+        if invalid:
+            return {
+                "success": False,
+                "message": f"Invalid direct path {', '.join(invalid)}: {DIRECT_PATH_RULE}",
+            }
+
         # Backup config if requested
         backup_path = None
         if backup:
@@ -1368,6 +1447,16 @@ class ConfigManager:
             return {
                 "success": False,
                 "message": "No modification specified. Use --add-files, --remove-files, --add-encrypt-files, --remove-encrypt-files, --recursive, or --no-recursive.",
+                "changed": False,
+            }
+
+        invalid = self.find_invalid_direct_paths(
+            self.config.targets[target_index].path, add_files
+        )
+        if invalid:
+            return {
+                "success": False,
+                "message": f"Invalid direct path {', '.join(invalid)}: {DIRECT_PATH_RULE}",
                 "changed": False,
             }
 
@@ -2147,6 +2236,14 @@ class ConfigManager:
                 return (True, parsed, "")
 
             elif key_type == "string":
+                if key == "repository.machine_name":
+                    violation = machine_name_violation(value)
+                    if violation:
+                        return (
+                            False,
+                            None,
+                            f"Invalid machine name '{value}': {violation}",
+                        )
                 return (True, value, "")
 
             elif key_type == "enum":

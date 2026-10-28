@@ -19,14 +19,16 @@ def make_file_manager(
     encryption: bool = False,
     skip_dirs: list[str] | None = None,
     max_file_size_mb: float | None = None,
+    machine_name: str | None = MACHINE,
+    use_hostname: bool = False,
 ) -> FileManager:
     """Build a FileManager from an in-memory config dict."""
     config: dict = {
         "targets": targets,
         "repository": {
             "path": str(env["repo"]),
-            "use_hostname": False,
-            "machine_name": MACHINE,
+            "use_hostname": use_hostname,
+            "machine_name": machine_name,
         },
         "blacklist": blacklist or [],
         "encrypt_list": encrypt_list or [],

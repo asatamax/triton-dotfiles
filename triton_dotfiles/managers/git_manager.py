@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
 
+from ..utils import machine_name_violation
+
 
 class GitManager:
     """Manages Git operations."""
@@ -472,6 +474,16 @@ class GitManager:
         Returns:
             実行結果の辞書
         """
+        # マシン名がリポジトリ直下の1要素でないと git add の対象がリポジトリ全体や外部になる
+        violation = machine_name_violation(machine_name)
+        if violation:
+            return {
+                "success": False,
+                "message": f"Invalid machine name '{machine_name}': {violation}",
+                "output": "",
+                "error": "Set repository.machine_name in config.yml to a single folder name",
+            }
+
         if not self.repo_root.exists():
             return {
                 "success": False,

@@ -557,3 +557,34 @@ class TestEscapingDirectPathsAndUnresolvedTargets:
         )
 
         assert fm.cleanup_repository_files(MACHINE, dry_run=True)["would_delete"] == []
+
+
+class TestDirectPathThroughSourceSymlink:
+    """A direct path is resolved on the source side exactly as backup reads it."""
+
+    def _setup(self, env) -> tuple[Path, FileManager]:
+        source = env["tmp"] / "source"
+        (source / "sub").mkdir(parents=True)
+        write_file(source / "keep.json", b"source")
+        (env["home"] / "proj").mkdir()
+        (env["home"] / "proj" / "link").symlink_to(source / "sub")
+        fm = make_file_manager(
+            env, [{"path": "~/proj", "files": ["link/../keep.json"]}]
+        )
+        fm.backup_files(MACHINE)
+        assert (env["backup_dir"] / "proj" / "keep.json").read_bytes() == b"source"
+        return source, fm
+
+    def test_backed_up_file_kept(self, env):
+        _source, fm = self._setup(env)
+
+        assert fm.cleanup_repository_files(MACHINE, dry_run=True)["would_delete"] == []
+
+    def test_orphaned_when_source_removed(self, env, capsys):
+        source, fm = self._setup(env)
+        (source / "keep.json").unlink()
+
+        result = fm.cleanup_repository_files(MACHINE, dry_run=True)
+
+        assert result["would_delete"] == ["proj/keep.json"]
+        assert "  Orphaned: proj/keep.json" in capsys.readouterr().out

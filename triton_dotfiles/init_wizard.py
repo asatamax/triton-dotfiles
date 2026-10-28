@@ -15,7 +15,11 @@ import click
 from colorama import Fore, Style
 
 from .utils import get_triton_dir, import_class_from_module
-from .wizard_common import prompt_valid_path, update_config_repository_settings
+from .wizard_common import (
+    prompt_valid_path,
+    report_unsafe_machine_name,
+    update_config_repository_settings,
+)
 
 create_default_config = import_class_from_module("config", "create_default_config")
 create_encryption_key = import_class_from_module("encryption", "create_encryption_key")
@@ -615,6 +619,12 @@ class InitWizard:
         auto_name = get_machine_name_unified(use_hostname=True)
 
         if self.non_interactive:
+            message = report_unsafe_machine_name(auto_name)
+            if message:
+                self.result.errors.append(
+                    f"{message}; run 'triton init' interactively to enter a name"
+                )
+                return False
             self.result.machine_name = auto_name
             click.echo(
                 f"  Using auto-detected name: {Fore.CYAN}{auto_name}{Style.RESET_ALL}"
@@ -638,12 +648,16 @@ class InitWizard:
         )
 
         if choice == 1:
+            if report_unsafe_machine_name(auto_name):
+                return self._step_machine_name()  # Retry with a custom name
             self.result.machine_name = auto_name
             click.echo(
                 f"  Using: {Fore.CYAN}{auto_name}{Style.RESET_ALL} {Fore.GREEN}Done{Style.RESET_ALL}"
             )
         else:
             custom_name = click.prompt("  Enter machine name")
+            if report_unsafe_machine_name(custom_name):
+                return self._step_machine_name()  # Retry
             # Validate: no spaces, no special characters except - and _
             if (
                 not custom_name

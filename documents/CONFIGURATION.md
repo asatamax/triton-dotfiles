@@ -41,7 +41,7 @@ config:
 |-----|------|---------|-------------|
 | `path` | string | - | **Required.** Backup destination directory |
 | `use_hostname` | boolean | `true` | Auto-detect machine name from hostname |
-| `machine_name` | string | - | Override auto-detected machine name |
+| `machine_name` | string | - | Override auto-detected machine name. Must be a single folder name: not empty, not `.` or `..`, no `/` or `\`, no drive letter (`C:`). The auto-detected name must satisfy the same rule; if it does not, set `machine_name` |
 | `auto_pull` | boolean | `true` | Run `git pull` when TUI starts |
 | `excluded_directories` | list | - | Directories to exclude from machine detection |
 
@@ -85,6 +85,7 @@ config:
 - Non-recursive targets **must** specify `files`
 - Recursive targets without `files` collect all files
 - Recursive targets with `files` filter by pattern
+- Direct paths (`files` entries containing `/` and no wildcards, such as `app/.env`) must be relative to the target `path`. Absolute entries (`/etc/hosts`, `~/...`, `C:\...`, `\\server\...`) are invalid. `..` is allowed only while the backup copy stays inside the machine's backup directory: `../keep.json` on `~/proj/sub` is valid, `../../x` on `~/proj` is not. `triton config validate` reports invalid entries as errors, `triton config target add` and `target modify` refuse them, and backup rejects any file whose destination would fall outside the machine's backup directory, including through a symlink inside the repository.
 
 ### blacklist
 

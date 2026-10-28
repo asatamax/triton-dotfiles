@@ -20,6 +20,7 @@ from .wizard_common import (
     prompt_valid_path,
     read_machine_name_from_config,
     read_repository_path_from_config,
+    report_unsafe_machine_name,
     scan_vault_machines,
     update_config_repository_settings,
 )
@@ -361,6 +362,11 @@ class JoinWizard:
                 if not machine_name:
                     self.result.errors.append("Machine name not provided")
                     return False
+
+        message = report_unsafe_machine_name(machine_name)
+        if message:
+            self.result.errors.append(message)
+            return False
 
         self.result.machine_name = machine_name
 

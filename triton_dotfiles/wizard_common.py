@@ -11,6 +11,8 @@ from typing import Optional
 import click
 from colorama import Fore, Style
 
+from .utils import machine_name_violation
+
 
 def prompt_valid_path(prompt_text: str, default: Optional[str] = None) -> Path:
     """Prompt for a valid file path with validation.
@@ -53,6 +55,25 @@ def prompt_valid_path(prompt_text: str, default: Optional[str] = None) -> Path:
         return Path(path_str).expanduser()
 
 
+def report_unsafe_machine_name(machine_name: str) -> str | None:
+    """Print and return an error when machine_name cannot be the machine folder.
+
+    Args:
+        machine_name: Auto-detected or user-entered machine name.
+
+    Returns:
+        The error message, or None when the name is safe.
+    """
+    violation = machine_name_violation(machine_name)
+    if violation is None:
+        return None
+    message = (
+        f"Machine name '{machine_name}' cannot be used as a folder name ({violation})"
+    )
+    click.echo(f"  {Fore.RED}Error: {message}{Style.RESET_ALL}")
+    return message
+
+
 def update_config_repository_settings(
     config_path: Path,
     vault_path: Optional[Path] = None,
@@ -76,7 +97,7 @@ def update_config_repository_settings(
 
         if vault_path:
             vault_path_str = str(vault_path)
-            if vault_path_str.startswith(home):
+            if Path(vault_path).is_relative_to(home):
                 vault_path_str = "~" + vault_path_str[len(home) :]
             content = content.replace(
                 "path: ~/dotfiles-repo",

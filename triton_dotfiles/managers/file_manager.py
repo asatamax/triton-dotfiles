@@ -26,10 +26,16 @@ from colorama import Fore, Style, init
 
 # 暗号化モジュール、Gitマネージャー、ファイル比較マネージャーのインポート
 from ..utils import (
+    backup_relative_destination,
     import_class_from_module,
     get_triton_dir,
+    direct_path_violation,
+    destination_violation,
+    is_within_directory,
+    machine_name_violation,
     matches_glob_pattern,
     separate_direct_and_pattern_files,
+    target_backup_subdir,
 )
 from .file_comparison_manager import FileComparisonManager, ComparisonMethod
 
@@ -92,10 +98,12 @@ class TargetScope:
     target: Any
     expanded_path: Path
     backup_prefix: tuple[str, ...]  # マシンディレクトリからのバックアップ先（パス要素）
-    # 解決後の相対パス → collect_target_files() Phase 1と同じ正規化の表記
+    # Phase 1の相対パス（Path化のみ、".."は保持） → collect_target_files()と同じ正規化の表記
     direct_paths: dict[Path, str]
-    # target外へ出る（".."で始まる）direct pathのバックアップ先 → Phase 1の表記
-    escaping_destinations: dict[Path, str]
+    # direct pathの正規化後のバックアップ先（マシンディレクトリからの相対） → Phase 1の表記
+    direct_destinations: dict[Path, list[str]]
+    # collect_target_files()と同じく、拒否されるものも含めてdirect pathのみで構成される
+    direct_only: bool
     glob_patterns: list[str]
     unresolved: bool  # 未定義の環境変数を含む
 
@@ -300,8 +308,23 @@ class FileManager:
         return False
 
     def get_backup_dir(self, machine_name: str) -> Path:
-        """バックアップディレクトリのパスを取得"""
-        return self.repo_root / machine_name
+        """バックアップディレクトリのパスを取得
+
+        マシン名はリポジトリ直下の1要素でなければならない（全ての書き込み・削除の
+        基準ディレクトリになるため）。不正な名前は補正せずエラーにする。
+
+        Raises:
+            ValueError: マシン名がリポジトリ直下の1要素として安全でない場合
+        """
+        violation = machine_name_violation(machine_name)
+        backup_dir = self.repo_root / machine_name if not violation else None
+        if backup_dir is None or not is_within_directory(backup_dir, self.repo_root):
+            raise ValueError(
+                f"Invalid machine name '{machine_name}': "
+                f"{violation or 'must stay inside the repository'}. "
+                "Set repository.machine_name in config.yml to a single folder name."
+            )
+        return backup_dir
 
     def ensure_machine_backup_dir(self, machine_name: str) -> Optional[Path]:
         """自マシンのバックアップディレクトリを確保する。
@@ -493,7 +516,10 @@ class FileManager:
                     yield filepath
 
     def collect_target_files(
-        self, target, match_result: Optional[PatternMatchResult] = None
+        self,
+        target,
+        match_result: Optional[PatternMatchResult] = None,
+        rejected: list[tuple[str, str]] | None = None,
     ) -> Generator[Tuple[Path, str], None, None]:
         """
         対象ファイルを収集（negation pattern + re-inclusion対応）
@@ -507,6 +533,8 @@ class FileManager:
         Args:
             target: バックアップ対象の設定
             match_result: パターンマッチング結果を記録（dry-run出力用、省略可）
+            rejected: バックアップ先がマシンディレクトリ外になるため扱わない
+                direct pathを (direct_path, reason) で記録（省略可）
 
         Yields:
             (file_path, relative_path)のタプル
@@ -528,6 +556,13 @@ class FileManager:
 
         # === Phase 1: Direct path processing (no directory scan needed) ===
         for direct_path in direct_paths:
+            # 設定検証と同じ判定で、バックアップ先が外に出るdirect pathは収集しない
+            reason = direct_path_violation(expanded_path, direct_path)
+            if reason:
+                if rejected is not None:
+                    rejected.append((direct_path, reason))
+                continue
+
             # Normalize Windows backslashes to forward slashes
             normalized_path = direct_path.replace("\\", "/")
             file_path = expanded_path / normalized_path
@@ -719,16 +754,31 @@ class FileManager:
                 )
 
             # バックアップ先のベースディレクトリを決定
-            base_backup_dir = backup_dir / self._target_backup_subdir(expanded_path)
+            backup_subdir = target_backup_subdir(expanded_path)
 
             # dry-run時はパターンマッチング結果を収集
             match_result = PatternMatchResult() if dry_run else None
+            rejected_direct_paths: list[tuple[str, str]] = []
 
             # ファイルをコピー
             for source_file, relative_path in self.collect_target_files(
-                target, match_result
+                target, match_result, rejected_direct_paths
             ):
-                dest_file = base_backup_dir / relative_path
+                # リポジトリ側では".."を辿らない: 字句的に正規化した宛先だけを
+                # 検査・stale削除・ディレクトリ作成・比較・書き込みに使う
+                dest_file = backup_dir / backup_relative_destination(
+                    backup_subdir, relative_path
+                )
+
+                # バックアップ先はマシンディレクトリ内に限る（設定検証をすり抜けた場合の多層防御）
+                if not is_within_directory(dest_file, backup_dir):
+                    self._reject_destination(
+                        relative_path,
+                        f"backup destination is outside {backup_dir}",
+                        dry_run,
+                        results,
+                    )
+                    continue
 
                 # システム保護ファイルチェック
                 if self.is_system_protected_path(source_file):
@@ -756,11 +806,26 @@ class FileManager:
                 if will_encrypt:
                     dest_file = dest_file.with_suffix(dest_file.suffix + ".enc")
 
-                # Stale counterpart cleanup (encryption status changed)
+                # Stale counterpart (encryption status changed)
                 if will_encrypt:
                     stale_file = dest_file.parent / dest_file.name.removesuffix(".enc")
                 else:
                     stale_file = dest_file.parent / (dest_file.name + ".enc")
+
+                # 書き込み先とstale削除対象が、リポジトリ内のシンボリックリンクや
+                # ディレクトリ経由でマシンディレクトリ外に及ばないこと
+                # （親ディレクトリ作成・stale削除・書き込みの前に判定）
+                violation = destination_violation(
+                    dest_file, backup_dir
+                ) or destination_violation(stale_file, backup_dir, allow_symlink=True)
+                if violation:
+                    self._reject_destination(
+                        relative_path,
+                        f"backup destination {violation} ({backup_dir})",
+                        dry_run,
+                        results,
+                    )
+                    continue
 
                 if stale_file.exists():
                     stale_relative = stale_file.relative_to(backup_dir)
@@ -833,11 +898,29 @@ class FileManager:
                     print(f"  Error: {error_msg}")
                     results["errors"].append(error_msg)
 
+            for direct_path, reason in rejected_direct_paths:
+                self._reject_destination(
+                    direct_path, f"invalid direct path ({reason})", dry_run, results
+                )
+
             # dry-run時にパターンマッチング結果のサマリーを表示
             if dry_run and match_result:
                 self._print_pattern_match_summary(match_result)
 
         return results
+
+    def _reject_destination(
+        self,
+        relative_path: str,
+        reason: str,
+        dry_run: bool,
+        results: dict[str, list[str]],
+    ) -> None:
+        """バックアップ先の安全性検査に失敗したファイルをエラーとして報告"""
+        action = "Would reject" if dry_run else "Rejected"
+        error_msg = f"{action} {relative_path}: {reason}"
+        print(f"  Error: {error_msg}")
+        results["errors"].append(error_msg)
 
     def _print_pattern_match_summary(self, match_result: PatternMatchResult) -> None:
         """パターンマッチング結果のサマリーを表示（dry-run用）"""
@@ -938,7 +1021,7 @@ class FileManager:
             expanded_path = self.config_manager.expand_path(target.path)
 
             # バックアップ元のベースディレクトリを決定
-            base_backup_dir = backup_dir / self._target_backup_subdir(expanded_path)
+            base_backup_dir = backup_dir / target_backup_subdir(expanded_path)
 
             if not base_backup_dir.exists():
                 continue
@@ -1739,20 +1822,6 @@ class FileManager:
 
         return results
 
-    def _target_backup_subdir(self, expanded_path: Path) -> str:
-        """targetのバックアップ先をマシンディレクトリからの相対パスで返す（backup/restore/cleanup共通）
-
-        - ホームディレクトリ: マシンディレクトリ直下（空文字）
-        - ホーム配下: ホームからの相対パス（~/.ssh → .ssh）
-        - ホーム外: ディレクトリ名のみ（/opt/dots → dots）
-        """
-        home_str = str(Path.home())
-        if str(expanded_path) == home_str:
-            return ""
-        if str(expanded_path).startswith(home_str):
-            return str(expanded_path)[len(home_str) :].lstrip("/")
-        return expanded_path.name
-
     def _build_target_scopes(self) -> list[TargetScope]:
         """除外判定用のtarget情報を事前に構築（パフォーマンス最適化）"""
         scopes = []
@@ -1762,25 +1831,28 @@ class FileManager:
             direct_paths, glob_patterns = separate_direct_and_pattern_files(
                 target.files or []
             )
-            backup_subdir = self._target_backup_subdir(expanded_path)
-            # collect_target_files() Phase 1と同じ正規化。".."はバックアップ先で
-            # ファイルシステムが解決するため、キーはnormpathで解決後のパスにする
-            normalized = [p.replace("\\", "/") for p in direct_paths]
-            resolved = {Path(os.path.normpath(p)): p for p in normalized}
-            # target外へ出るdirect pathはプレフィックスでは辿れないため、
-            # 解決後のバックアップ先から逆引きできるようにする
-            escaping = {
-                Path(os.path.normpath(Path(backup_subdir) / rel)): p
-                for rel, p in resolved.items()
-                if rel.parts and rel.parts[0] == ".."
-            }
+            backup_subdir = target_backup_subdir(expanded_path)
+            # collect_target_files() Phase 1と同じ正規化。バックアップが拒否する
+            # direct pathは候補にしない
+            normalized = [
+                p.replace("\\", "/")
+                for p in direct_paths
+                if direct_path_violation(expanded_path, p) is None
+            ]
+            # direct pathはソース側で".."やシンボリックリンクがOSにより解決されるため、
+            # プレフィックスからの逆算ではなく、正規化後のバックアップ先から逆引きする
+            destinations: dict[Path, list[str]] = {}
+            for p in normalized:
+                destination = Path(backup_relative_destination(backup_subdir, p))
+                destinations.setdefault(destination, []).append(p)
             scopes.append(
                 TargetScope(
                     target=target,
                     expanded_path=expanded_path,
                     backup_prefix=Path(backup_subdir).parts,
-                    direct_paths=resolved,
-                    escaping_destinations=escaping,
+                    direct_paths={Path(p): p for p in normalized},
+                    direct_destinations=destinations,
+                    direct_only=bool(direct_paths) and not glob_patterns,
                     glob_patterns=glob_patterns,
                     unresolved=self.config_manager.should_skip_target(target),
                 )
@@ -1796,7 +1868,7 @@ class FileManager:
     ) -> list[tuple[TargetScope, Path]]:
         """リポジトリのファイルへバックアップしうるtargetと、対応するローカルパスを列挙
 
-        バックアップ先の決定規則（_target_backup_subdir）を逆にたどる。シンボリックリンクで
+        バックアップ先の決定規則（target_backup_subdir）を逆にたどる。シンボリックリンクで
         同一実体を指すtargetや、同名ディレクトリへバックアップされるホーム外targetなど、
         複数のtargetが同じリポジトリパスに対応しうるため、該当するものをすべて返す。
 
@@ -1807,7 +1879,8 @@ class FileManager:
 
         Returns:
             (scope, local_path) のリスト。暗号化ファイルは .enc を除いたパス。
-            target外へ出るdirect pathの候補は Phase 1 と同じ表記（target/../file）。
+            direct pathに対応する場合は、プレフィックスからの逆算ではなく
+            Phase 1 がバックアップ時に読むパス（target / 設定上の表記、未正規化）。
             ローカルの存在確認は呼び出し側で行う。
         """
         candidates = []
@@ -1818,16 +1891,20 @@ class FileManager:
         )
 
         for scope in target_scopes:
+            direct_paths = scope.direct_destinations.get(plain_relative)
+            if direct_paths:
+                candidates.extend(
+                    (scope, scope.expanded_path / direct_path)
+                    for direct_path in direct_paths
+                )
+                continue
+
             prefix = scope.backup_prefix
             if repo_parts[: len(prefix)] == prefix and len(repo_parts) > len(prefix):
                 local_path = scope.expanded_path.joinpath(*repo_parts[len(prefix) :])
                 if is_encrypted:
                     local_path = local_path.with_suffix("")
                 candidates.append((scope, local_path))
-
-            direct_path = scope.escaping_destinations.get(plain_relative)
-            if direct_path is not None:
-                candidates.append((scope, scope.expanded_path / direct_path))
 
         return candidates
 
@@ -1889,7 +1966,7 @@ class FileManager:
             return DECISION_INCLUDED, f"direct:{direct_path}"
 
         # direct pathのみのtargetは走査しない（collect_target_files()と同じ）
-        if not scope.glob_patterns and scope.direct_paths:
+        if scope.direct_only:
             return None
 
         # 非再帰モードは直下のファイルのみが範囲
@@ -2008,16 +2085,8 @@ class FileManager:
                 # backup_dir直下にファイルが保存される
                 return home / relative_path
             else:
-                # ホーム以外のディレクトリの場合
-                home_str = str(home)
-                if str(expanded_path).startswith(home_str):
-                    # ~/.ssh -> .ssh のような変換が行われる
-                    backup_relative_path = str(expanded_path)[len(home_str) :].lstrip(
-                        "/"
-                    )
-                else:
-                    # ホーム外のパスの場合はディレクトリ名のみ
-                    backup_relative_path = expanded_path.name
+                # ~/.ssh -> .ssh、ホーム外はディレクトリ名のみ
+                backup_relative_path = target_backup_subdir(expanded_path)
 
                 # relative_pathがこのbackup_relative_pathで始まるかチェック
                 if str(relative_path).startswith(backup_relative_path):
@@ -2057,7 +2126,6 @@ class FileManager:
         """targetのマッピングを事前に構築（パフォーマンス最適化）"""
         mappings = {}
         home = Path.home()
-        home_str = str(home)
 
         for target in self.config_manager.config.targets:
             expanded_path = self.config_manager.expand_path(target.path)
@@ -2066,16 +2134,8 @@ class FileManager:
                 # ホームディレクトリ直下の場合は特別なキー
                 mappings["HOME_DIRECT"] = home
             else:
-                if str(expanded_path).startswith(home_str):
-                    # ~/.ssh -> .ssh のような変換
-                    backup_relative_path = str(expanded_path)[len(home_str) :].lstrip(
-                        "/"
-                    )
-                else:
-                    # ホーム外のパスの場合はディレクトリ名のみ
-                    backup_relative_path = expanded_path.name
-
-                mappings[backup_relative_path] = expanded_path
+                # ~/.ssh -> .ssh、ホーム外はディレクトリ名のみ
+                mappings[target_backup_subdir(expanded_path)] = expanded_path
 
         return mappings
 
