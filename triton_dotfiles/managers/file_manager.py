@@ -14,6 +14,9 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from colorama import Fore, Style, init
 
+# ホーム外のファイルをアーカイブする際の予約ディレクトリ名（絶対パスを再現する）
+ARCHIVE_OUTSIDE_HOME_DIR = "_root"
+
 # システム保護パス設定
 # 注意: 実際の保護は is_system_protected_path() メソッドで TRITON_DIR を使用して動的に行われます
 # 以下のパスは ${TRITON_DIR} 内で保護される相対パス:
@@ -26,16 +29,24 @@ from colorama import Fore, Style, init
 
 # 暗号化モジュール、Gitマネージャー、ファイル比較マネージャーのインポート
 from ..utils import (
+    ARCHIVE_TIMESTAMP_FORMAT,
     backup_relative_destination,
+    create_unique_archive_dir,
     import_class_from_module,
     get_triton_dir,
     direct_path_violation,
     destination_violation,
+    is_direct_path,
     is_within_directory,
     machine_name_violation,
+    make_dirs,
+    make_private_dirs,
+    matches_any_pattern,
+    normalize_direct_path,
     matches_glob_pattern,
     separate_direct_and_pattern_files,
     target_backup_subdir,
+    write_private_file,
 )
 from .file_comparison_manager import FileComparisonManager, ComparisonMethod
 
@@ -104,7 +115,6 @@ class TargetScope:
     direct_destinations: dict[Path, list[str]]
     # collect_target_files()と同じく、拒否されるものも含めてdirect pathのみで構成される
     direct_only: bool
-    glob_patterns: list[str]
     unresolved: bool  # 未定義の環境変数を含む
 
 
@@ -145,6 +155,9 @@ def evaluate_patterns_sequential(
         - !**/confs/*.xml にマッチ → included = False
         - **/confs/my-settings.xml にマッチ → included = True (re-inclusion)
 
+    direct path（"/"を含むglobでない項目、"!"付きを含む）はその位置での、
+    正規化した相対パスとの完全一致として評価する（backup の両フェーズと cleanup で共通）。
+
     Args:
         path: チェック対象のパス（相対パス）
         patterns: パターンリスト（!プレフィックスで除外）
@@ -154,19 +167,20 @@ def evaluate_patterns_sequential(
     """
     included = False
     matched_pattern = None
+    normalized_path = os.path.normpath(str(path))
 
     for pattern in patterns:
-        if pattern.startswith("!"):
-            # 除外パターン
-            excl_pattern = pattern[1:]
-            if matches_glob_pattern(path, excl_pattern):
-                included = False
-                matched_pattern = pattern
+        negated = pattern.startswith("!")
+        body = pattern[1:] if negated else pattern
+        if is_direct_path(body):
+            # direct path（"!"付きを含む）は正規化した相対パスとの完全一致
+            matched = normalize_direct_path(body) == normalized_path
         else:
-            # 包含パターン
-            if matches_glob_pattern(path, pattern):
-                included = True
-                matched_pattern = pattern
+            matched = matches_glob_pattern(path, body)
+
+        if matched:
+            included = not negated
+            matched_pattern = pattern
 
     return included, matched_pattern
 
@@ -212,6 +226,15 @@ class FileManager:
                 )
             self.encryption_manager = get_encryption_manager(key_file)
 
+        # 設定されたキーファイルはTRITON_DIR外にあってもバックアップ対象にしない
+        self.protected_key_file = None
+        if config_manager.config.encryption.key_file:
+            self.protected_key_file = (
+                config_manager.expand_path(config_manager.config.encryption.key_file)
+                .expanduser()
+                .resolve()
+            )
+
         # 統一ファイル比較マネージャーを初期化
         self.file_comparison_manager = FileComparisonManager(self.encryption_manager)
 
@@ -219,6 +242,10 @@ class FileManager:
         """システム保護パスかどうかをチェック（TRITON_DIR対応）"""
         # ファイルパスを絶対パスに正規化
         file_abs = Path(file_path).expanduser().resolve()
+
+        # 設定されたキーファイル（暗号化キー、場所を問わない）
+        if self.protected_key_file is not None and file_abs == self.protected_key_file:
+            return True
 
         # Tritonディレクトリ内かチェック
         try:
@@ -324,6 +351,12 @@ class FileManager:
                 f"{violation or 'must stay inside the repository'}. "
                 "Set repository.machine_name in config.yml to a single folder name."
             )
+        if backup_dir.is_symlink():
+            # リポジトリ内のシンボリックリンク（gitで持ち込める）で書き込み先が外へ向かうのを防ぐ
+            raise ValueError(
+                f"Machine directory {backup_dir} is a symlink; refusing to use it. "
+                "Replace it with a real directory inside the repository."
+            )
         return backup_dir
 
     def ensure_machine_backup_dir(self, machine_name: str) -> Optional[Path]:
@@ -383,12 +416,10 @@ class FileManager:
     def create_restore_archive(self, timestamp: str = None) -> Path:
         """復元時の既存ファイルアーカイブディレクトリを作成（TRITON_DIR対応）"""
         if not timestamp:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime(ARCHIVE_TIMESTAMP_FORMAT)
 
-        archive_root = self.triton_dir / "archives" / timestamp
-        archive_root.mkdir(parents=True, exist_ok=True)
-
-        return archive_root
+        # 同一秒の実行でも別ディレクトリにする（既存アーカイブを上書きしない）
+        return create_unique_archive_dir(self.triton_dir / "archives", timestamp)
 
     def _ensure_restore_archive_root(
         self, restore_archive_root: Optional[Path]
@@ -417,6 +448,35 @@ class FileManager:
             results["backed_up"].append(str(archived_file))
 
         return restore_archive_root
+
+    def _prepare_output_parent(
+        self,
+        output_file: Path,
+        private: bool,
+        created_dirs: set[Path] | None = None,
+    ) -> None:
+        """出力先の親ディレクトリを作成（復号化した平文用は0o700）
+
+        Args:
+            output_file: 出力ファイル
+            private: 復号化した平文の出力かどうか
+            created_dirs: 同じ復元実行で作成したディレクトリの記録（省略可）。
+                平文の出力時は、この実行で作成した祖先も0o700にする
+                （先に通常ファイルの復元で作られた共有ディレクトリ対策）。
+                既存のディレクトリの権限は変更しない。
+        """
+        if private:
+            created = make_private_dirs(output_file.parent)
+        else:
+            created = make_dirs(output_file.parent)
+
+        if created_dirs is None:
+            return
+        created_dirs.update(created)
+        if private:
+            for directory in (output_file.parent, *output_file.parent.parents):
+                if directory in created_dirs:
+                    directory.chmod(0o700)
 
     def _is_file_unchanged_for_restore(
         self, backup_file: Path, actual_dest_file: Path, relative_path: Path
@@ -467,7 +527,17 @@ class FileManager:
     def archive_existing_file(
         self, file_path: Path, archive_root: Path
     ) -> Optional[Path]:
-        """既存ファイルを集中アーカイブディレクトリに保存"""
+        """既存ファイルを集中アーカイブディレクトリに保存
+
+        ホーム配下は ``<archive_root>/<ホームからの相対パス>``、ホーム外は
+        ``<archive_root>/_root/<絶対パス>`` に配置する（パスを平坦化しないので衝突しない）。
+
+        Returns:
+            アーカイブしたファイルのパス。元ファイルが存在しない場合はNone。
+
+        Raises:
+            OSError: アーカイブに失敗した場合（呼び出し側は上書きを中止する）
+        """
         if not file_path.exists():
             return None
 
@@ -477,21 +547,33 @@ class FileManager:
             if file_path.is_relative_to(home):
                 relative_path = file_path.relative_to(home)
             else:
-                # ホーム外のファイルの場合は絶対パスを使用（安全な形に変換）
-                relative_path = str(file_path).lstrip("/").replace("/", "_")
+                # ホーム外のファイルは予約ディレクトリ配下に絶対パスをそのまま再現
+                relative_path = Path(ARCHIVE_OUTSIDE_HOME_DIR).joinpath(
+                    *file_path.parts[1:]
+                )
         except Exception:
             # fallback: ファイル名のみ使用
             relative_path = file_path.name
 
         archive_file = archive_root / relative_path
-        archive_file.parent.mkdir(parents=True, exist_ok=True)
-
+        if os.path.lexists(archive_file):
+            # 同じ実行内で既に使われた名前（_root 配下とホーム配下の衝突など）は上書きしない
+            original = archive_file
+            suffix = 1
+            archive_file = original.with_name(f"{original.name}~{suffix}")
+            while os.path.lexists(archive_file):
+                suffix += 1
+                archive_file = original.with_name(f"{original.name}~{suffix}")
+            print(
+                f"  Archived as {archive_file.relative_to(archive_root)} "
+                "(name already used in this archive)"
+            )
         try:
+            archive_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(file_path, archive_file)
-            return archive_file
-        except Exception as e:
-            print(f"  Warning: Failed to archive {file_path}: {e}")
-            return None
+        except OSError as e:
+            raise OSError(f"Failed to archive {file_path}: {e}") from e
+        return archive_file
 
     def _walk_recursive(
         self,
@@ -577,11 +659,24 @@ class FileManager:
             relative_path = Path(normalized_path)
 
             # Global blacklist check
-            blacklist_match = self._check_blacklist_match(file_path)
+            blacklist_match = self._check_blacklist_match(
+                file_path, target, relative_path
+            )
             if blacklist_match:
                 if match_result:
                     match_result.blacklist_blocked.append(
                         (str(relative_path), blacklist_match)
+                    )
+                continue
+
+            # filesリスト全体の順序評価（後続の "!" パターンで除外されうる）
+            included, matched_pattern = evaluate_patterns_sequential(
+                relative_path, patterns
+            )
+            if not included:
+                if matched_pattern and match_result:
+                    match_result.pattern_excluded.append(
+                        (str(relative_path), matched_pattern)
                     )
                 continue
 
@@ -620,7 +715,7 @@ class FileManager:
             relative_path = file_path.relative_to(expanded_path)
 
             decision, matched_pattern = self._classify_scanned_file(
-                file_path, relative_path, glob_patterns, target.recursive
+                file_path, relative_path, patterns, target
             )
 
             if decision == DECISION_BLACKLISTED:
@@ -651,35 +746,36 @@ class FileManager:
         self,
         file_path: Path,
         relative_path: Path,
-        glob_patterns: list[str],
-        recursive: bool,
+        patterns: list[str],
+        target: Any,
     ) -> tuple[str, str | None]:
         """走査で見つかったファイルを収集するかを設定パターンで判定（backup/cleanup共通）
 
         評価順序:
         1. グローバルblacklist（上書き不可）
-        2. globパターンの順序評価（最後にマッチしたパターンが勝つ、re-inclusion対応）
+        2. filesリスト全体の順序評価（最後にマッチしたパターンが勝つ、re-inclusion対応）
         3. パターンが空の場合、再帰モードは全ファイル収集、非再帰モードは何も収集しない
 
         Args:
             file_path: チェック対象のファイルパス（絶対パス）
             relative_path: targetのpathからの相対パス
-            glob_patterns: targetのglobパターン（direct pathを除いたもの）
-            recursive: targetが再帰モードかどうか
+            patterns: targetのfilesリスト全体（direct pathを含む）
+            target: 対象のTarget設定（再帰モードとencrypt_filesを参照）
 
         Returns:
             (decision, matched_pattern)。decisionは DECISION_INCLUDED /
             DECISION_BLACKLISTED / DECISION_EXCLUDED のいずれか。
         """
-        blacklist_match = self._check_blacklist_match(file_path)
+        recursive = target.recursive
+        blacklist_match = self._check_blacklist_match(file_path, target, relative_path)
         if blacklist_match:
             return DECISION_BLACKLISTED, blacklist_match
 
         default_pattern = "**/*" if recursive else "*"
 
-        if glob_patterns:
+        if patterns:
             included, matched_pattern = evaluate_patterns_sequential(
-                relative_path, glob_patterns
+                relative_path, patterns
             )
             if not included:
                 return DECISION_EXCLUDED, matched_pattern
@@ -690,26 +786,38 @@ class FileManager:
 
         return DECISION_EXCLUDED, None
 
-    def _check_blacklist_match(self, file_path: Path) -> Optional[str]:
+    def _check_blacklist_match(
+        self,
+        file_path: Path,
+        target: Any = None,
+        relative_path: Path | None = None,
+    ) -> Optional[str]:
         """
-        ファイルがblacklistにマッチするかチェック
+        ファイルがblacklist（または暗号化無効時の暗号化対象）にマッチするかチェック
 
         Args:
             file_path: チェック対象のファイルパス
+            target: 対象のTarget設定（target.encrypt_filesの判定に使用）
+            relative_path: targetのpathからの相対パス
 
         Returns:
             マッチしたパターン、マッチしない場合はNone
         """
-        if self.config_manager.should_exclude(file_path):
+        if self.config_manager.should_exclude(file_path, target, relative_path):
             # マッチしたパターンを特定
             file_name = file_path.name
-            for pattern in self.config_manager.config.blacklist:
+            blacklist = self.config_manager.config.blacklist
+            for pattern in blacklist:
                 if "*" in pattern or "?" in pattern:
                     if fnmatch.fnmatch(file_name, pattern):
                         return pattern
                 else:
                     if pattern == file_name:
                         return pattern
+            # パス（ホーム相対・target相対）でマッチしたパターン
+            for pattern in blacklist:
+                if matches_any_pattern(file_path, [pattern], relative_path):
+                    return pattern
             return "blacklist"
         return None
 
@@ -989,23 +1097,34 @@ class FileManager:
 
         # アーカイブルートは必要になった時に作成（遅延作成）
         restore_archive_root = None
+        # この実行で作成したディレクトリ（復号化した平文の親の権限調整に使用）
+        created_dirs: set[Path] = set()
 
         if file_patterns:
             # 特定ファイル復元モード
             restore_archive_root = self._restore_specific_files_impl(
-                backup_dir, file_patterns, restore_archive_root, dry_run, results
+                backup_dir,
+                file_patterns,
+                restore_archive_root,
+                dry_run,
+                results,
+                created_dirs,
             )
         else:
             # 全ファイル復元モード
             restore_archive_root = self._restore_all_files_impl(
-                backup_dir, restore_archive_root, dry_run, results
+                backup_dir, restore_archive_root, dry_run, results, created_dirs
             )
 
-        # アーカイブが実際に作成された場合のみメッセージ表示
+        # 実際にアーカイブしたファイルがある場合のみメッセージ表示
         if restore_archive_root and not dry_run:
-            print(
-                f"Existing files were archived to: {Fore.YELLOW}{restore_archive_root}{Style.RESET_ALL}"
-            )
+            if results["backed_up"]:
+                print(
+                    f"Existing files were archived to: {Fore.YELLOW}{restore_archive_root}{Style.RESET_ALL}"
+                )
+            elif not any(restore_archive_root.iterdir()):
+                # アーカイブに失敗して空のまま残った実行ディレクトリは片付ける
+                restore_archive_root.rmdir()
 
         return results
 
@@ -1015,6 +1134,7 @@ class FileManager:
         restore_archive_root: Optional[Path],
         dry_run: bool,
         results: Dict[str, List[str]],
+        created_dirs: set[Path] | None = None,
     ) -> Optional[Path]:
         """全ファイル復元の実装"""
         for target in self.config_manager.config.targets:
@@ -1057,8 +1177,12 @@ class FileManager:
                             actual_dest_file, restore_archive_root, results
                         )
 
-                        # ディレクトリ作成
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
+                        # ディレクトリ作成（復号化した平文の親は所有者のみ）
+                        self._prepare_output_parent(
+                            dest_file,
+                            private=backup_file.suffix == ".enc",
+                            created_dirs=created_dirs,
+                        )
 
                         # 暗号化ファイルの復号化チェック
                         if backup_file.suffix == ".enc":
@@ -1075,8 +1199,7 @@ class FileManager:
 
                                     # .encを除いた元のファイル名で保存
                                     actual_dest = dest_file.with_suffix("")
-                                    with open(actual_dest, "wb") as dst:
-                                        dst.write(decrypted_data)
+                                    write_private_file(actual_dest, decrypted_data)
                                     print(
                                         f"  {'Would decrypt' if dry_run else 'Decrypted'}: {relative_path}"
                                     )
@@ -1119,6 +1242,7 @@ class FileManager:
         restore_archive_root: Optional[Path],
         dry_run: bool,
         results: Dict[str, List[str]],
+        created_dirs: set[Path] | None = None,
     ) -> Optional[Path]:
         """特定ファイル復元の実装"""
         # ファイルパターンにマッチするバックアップファイルを検索
@@ -1190,8 +1314,12 @@ class FileManager:
                         actual_dest_file, restore_archive_root, results
                     )
 
-                    # ディレクトリ作成
-                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    # ディレクトリ作成（復号化した平文の親は所有者のみ）
+                    self._prepare_output_parent(
+                        dest_file,
+                        private=backup_file.suffix == ".enc",
+                        created_dirs=created_dirs,
+                    )
 
                     # 暗号化ファイルの復号化チェック
                     if backup_file.suffix == ".enc":
@@ -1204,8 +1332,7 @@ class FileManager:
                                 )
 
                                 # .encを除いた元のファイル名で保存
-                                with open(actual_dest_file, "wb") as dst:
-                                    dst.write(decrypted_data)
+                                write_private_file(actual_dest_file, decrypted_data)
                                 print(f"  Decrypted and restored: {relative_path}")
                             except Exception as e:
                                 error_msg = f"Error decrypting {backup_file}: {e}"
@@ -1318,8 +1445,10 @@ class FileManager:
             return result
 
         try:
-            # 出力ディレクトリを作成
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # 出力ディレクトリを作成（復号化した平文の親は所有者のみ）
+            self._prepare_output_parent(
+                output_file, private=result["encrypted"] and decrypt
+            )
 
             if result["encrypted"] and decrypt:
                 # 暗号化ファイルを復号化してエクスポート
@@ -1330,8 +1459,7 @@ class FileManager:
                         encrypted_data
                     )
 
-                    with open(output_file, "wb") as dst:
-                        dst.write(decrypted_data)
+                    write_private_file(output_file, decrypted_data)
 
                     result["decrypted"] = True
                     print(f"  Decrypted and exported: {output_file}")
@@ -1853,7 +1981,6 @@ class FileManager:
                     direct_paths={Path(p): p for p in normalized},
                     direct_destinations=destinations,
                     direct_only=bool(direct_paths) and not glob_patterns,
-                    glob_patterns=glob_patterns,
                     unresolved=self.config_manager.should_skip_target(target),
                 )
             )
@@ -1960,9 +2087,19 @@ class FileManager:
             direct_file = scope.expanded_path / direct_path
             if not direct_file.is_file():
                 return DECISION_SKIPPED, None
-            blacklist_match = self._check_blacklist_match(direct_file)
+            blacklist_match = self._check_blacklist_match(
+                direct_file, target, relative_path
+            )
             if blacklist_match:
-                return self._blacklist_verdict(direct_file, blacklist_match)
+                return self._blacklist_verdict(
+                    direct_file, blacklist_match, relative_path
+                )
+            # Phase 1と同じくfilesリスト全体の順序評価
+            included, matched_pattern = evaluate_patterns_sequential(
+                relative_path, target.files or []
+            )
+            if not included:
+                return DECISION_EXCLUDED, matched_pattern
             return DECISION_INCLUDED, f"direct:{direct_path}"
 
         # direct pathのみのtargetは走査しない（collect_target_files()と同じ）
@@ -1974,22 +2111,25 @@ class FileManager:
             return None
 
         decision, matched_pattern = self._classify_scanned_file(
-            local_path, relative_path, scope.glob_patterns, target.recursive
+            local_path, relative_path, target.files or [], target
         )
         if decision == DECISION_BLACKLISTED:
-            return self._blacklist_verdict(local_path, matched_pattern)
+            return self._blacklist_verdict(local_path, matched_pattern, relative_path)
 
         return decision, matched_pattern
 
     def _blacklist_verdict(
-        self, local_path: Path, matched_pattern: str | None
+        self,
+        local_path: Path,
+        matched_pattern: str | None,
+        relative_path: Path | None = None,
     ) -> tuple[str, str | None]:
         """blacklist判定のうち、グローバルblacklist由来のものだけを除外として扱う
 
-        should_exclude() は暗号化無効時のencrypt_listも除外するが、
-        これは暗号化設定に依存する一時的な状態のため削除理由にしない。
+        should_exclude() は暗号化無効時の暗号化対象（encrypt_list / target.encrypt_files）も
+        除外するが、これは暗号化設定に依存する一時的な状態のため削除理由にしない。
         """
-        if self.config_manager.is_blacklisted(local_path):
+        if self.config_manager.is_blacklisted(local_path, relative_path):
             return DECISION_BLACKLISTED, matched_pattern
         return DECISION_SKIPPED, None
 

@@ -7,6 +7,8 @@ import os
 import re
 import sys
 import fnmatch
+import functools
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Type, List, Tuple
 
@@ -100,6 +102,136 @@ def get_triton_dir() -> Path:
     return Path(os.getenv("TRITON_DIR", "~/.config/triton")).expanduser().resolve()
 
 
+# fnmatch.translate() の出力 "(?s:...)\\Z"（新しいPythonでは "\\z"）から本体を取り出す
+_FNMATCH_TRANSLATION = re.compile(r"\A\(\?s:(.*)\)\\[Zz]\Z", re.DOTALL)
+
+
+def _translate_glob_class(expression: str) -> str:
+    """
+    Translate one bracket expression such as ``[!a-]`` to a regex.
+
+    The class contents are translated by fnmatch itself, so ranges, a leading
+    ``]``, ``-`` and ``!`` behave exactly as in fnmatch. A separate lookahead
+    keeps the class from matching '/', without altering its contents.
+
+    Raises:
+        ValueError: If the class can never match (e.g. ``[z-a]``).
+    """
+    match = _FNMATCH_TRANSLATION.match(fnmatch.translate(expression))
+    if not match:
+        raise ValueError(f"unsupported character class '{expression}'")
+    body = match.group(1)
+    if body == "(?!)":
+        raise ValueError(f"character class '{expression}' matches nothing")
+    return "(?!/)" + body
+
+
+def _translate_glob_segment(segment: str) -> str:
+    """Translate one '/'-free glob segment to a regex (fnmatch semantics, no '/')."""
+    out = []
+    i, n = 0, len(segment)
+    while i < n:
+        c = segment[i]
+        i += 1
+        if c == "*":
+            if i < n and segment[i] == "*":
+                # セグメント内の "**"（例: "a**"）は従来どおり "/" をまたいでマッチ
+                while i < n and segment[i] == "*":
+                    i += 1
+                out.append(".*")
+            else:
+                out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[":
+            j = i
+            if j < n and segment[j] == "!":
+                j += 1
+            if j < n and segment[j] == "]":
+                j += 1
+            while j < n and segment[j] != "]":
+                j += 1
+            if j >= n:
+                # 閉じ括弧がなければ fnmatch と同じく "[" はリテラル
+                out.append(re.escape(c))
+                continue
+            out.append(_translate_glob_class(segment[i - 1 : j + 1]))
+            i = j + 1
+        else:
+            out.append(re.escape(c))
+    return "".join(out)
+
+
+@functools.lru_cache(maxsize=1024)
+def _compile_globstar_pattern(pattern: str) -> "re.Pattern[str]":
+    """
+    Compile a pattern containing '**' to a regex, segment by segment.
+
+    ``**`` as a whole segment matches zero or more directories (a trailing
+    ``**`` matches everything below). Within a segment ``*`` and ``?`` never
+    match '/', ``[...]`` and ``[!...]`` are character classes as in fnmatch
+    (so ``[old]`` matches one of 'o', 'l', 'd'; ``[[]old]`` matches the literal
+    name ``[old]``), and every other character is literal.
+
+    Raises:
+        ValueError: If the pattern cannot be compiled (e.g. ``[z-a]``).
+    """
+    segments = pattern.split("/")
+    parts = []
+    try:
+        for index, segment in enumerate(segments):
+            is_last = index == len(segments) - 1
+            if segment == "**":
+                parts.append(".*" if is_last else "(?:.*/)?")
+            else:
+                parts.append(
+                    _translate_glob_segment(segment) + ("" if is_last else "/")
+                )
+        return re.compile(r"\A" + "".join(parts) + r"\Z", re.DOTALL)
+    except (re.error, ValueError) as e:
+        raise ValueError(f"Invalid pattern '{pattern}': {e}") from e
+
+
+def _legacy_globstar_match(path_str: str, pattern: str) -> bool:
+    """
+    The '**' translation used up to v1.3.1, kept only for encryption decisions.
+
+    It did not escape regex metacharacters, so it matched some paths the
+    current translation does not (``**/token(1).json`` matched ``token1.json``).
+    Files already encrypted because of such a match must stay encrypted, so
+    encryption decisions accept a match from either translation. Errors count
+    as no match, as they did then.
+    """
+    regex_pattern = pattern
+    regex_pattern = regex_pattern.replace(".", r"\.")
+    regex_pattern = regex_pattern.replace("?", ".")
+    regex_pattern = regex_pattern.replace("**/", "__GLOBSTAR_SLASH__")
+    regex_pattern = regex_pattern.replace("**", "__GLOBSTAR__")
+    regex_pattern = regex_pattern.replace("*", "[^/]*")
+    regex_pattern = regex_pattern.replace("__GLOBSTAR_SLASH__", "(?:.*/)?")
+    regex_pattern = regex_pattern.replace("__GLOBSTAR__", ".*")
+    try:
+        return bool(re.match(f"^{regex_pattern}$", path_str))
+    except re.error:
+        return False
+
+
+def glob_pattern_error(pattern: str) -> str | None:
+    """
+    Return why a pattern cannot be used, or None when it is valid.
+
+    Used by config validation so an invalid pattern is reported instead of
+    silently never matching (which would fail open for encryption).
+    """
+    if "**" not in pattern:
+        return None
+    try:
+        _compile_globstar_pattern(pattern)
+    except ValueError as e:
+        return str(e)
+    return None
+
+
 def matches_glob_pattern(path: Path, pattern: str) -> bool:
     """
     Check if a path matches a glob pattern.
@@ -115,62 +247,94 @@ def matches_glob_pattern(path: Path, pattern: str) -> bool:
 
     Returns:
         True if matched.
+
+    Raises:
+        ValueError: If a globstar pattern cannot be compiled.
     """
     # パスをPOSIX形式に正規化
     path_str = str(PurePosixPath(path))
 
-    # globstarパターン（**）の処理
+    # globstarパターン（**）はセグメント単位で正規表現に変換
     if "**" in pattern:
-        # **を正規表現に変換
-        # ** は任意のパス部分にマッチ（0個以上のディレクトリ）
-        regex_pattern = pattern
-        # エスケープが必要な文字を処理
-        regex_pattern = regex_pattern.replace(".", r"\.")
-        regex_pattern = regex_pattern.replace("?", ".")
-        # ** を一時的なプレースホルダに置換
-        regex_pattern = regex_pattern.replace("**/", "__GLOBSTAR_SLASH__")
-        regex_pattern = regex_pattern.replace("**", "__GLOBSTAR__")
-        # 通常の * を処理
-        regex_pattern = regex_pattern.replace("*", "[^/]*")
-        # globstarを復元
-        regex_pattern = regex_pattern.replace("__GLOBSTAR_SLASH__", "(?:.*/)?")
-        regex_pattern = regex_pattern.replace("__GLOBSTAR__", ".*")
-        # 完全マッチ
-        regex_pattern = f"^{regex_pattern}$"
+        return bool(_compile_globstar_pattern(pattern).match(path_str))
 
-        try:
-            return bool(re.match(regex_pattern, path_str))
-        except re.error:
-            return False
-    else:
-        # 標準のfnmatchを使用
-        # パス全体とファイル名の両方でマッチを試みる
-        if fnmatch.fnmatch(path_str, pattern):
-            return True
-        # ファイル名のみでもマッチを試みる
-        if fnmatch.fnmatch(path.name, pattern):
-            return True
-        return False
+    # 標準のfnmatchを使用
+    # パス全体とファイル名の両方でマッチを試みる
+    if fnmatch.fnmatch(path_str, pattern):
+        return True
+    # ファイル名のみでもマッチを試みる
+    if fnmatch.fnmatch(path.name, pattern):
+        return True
+    return False
 
 
-def matches_any_pattern(file_path: Path, patterns: List[str]) -> bool:
+def matches_any_pattern(
+    file_path: Path,
+    patterns: List[str],
+    relative_path: Path | None = None,
+    legacy_globstar: bool = False,
+) -> bool:
     """
     Check if a file matches any pattern in the list (OR evaluation).
 
-    Used for priority rules like blacklist or encrypt_list.
-    Returns True if any pattern matches.
+    Used for priority rules like blacklist or encrypt_list. A pattern matches
+    when it matches any of these forms of the file path (union, so a pattern
+    never matches fewer files than matching the path alone):
+
+    - the path as given (absolute for global lists) and its normalized form
+    - its basename
+    - the path relative to the home directory (when under home)
+    - the path relative to the target (when the caller knows it), raw and
+      normalized (so ``sub/../secrets/token`` also matches as ``secrets/token``)
 
     Args:
         file_path: File path to check.
         patterns: List of patterns.
+        relative_path: Path relative to the target, if known.
+        legacy_globstar: Also accept a match from the v1.3.1 '**' translation.
+            Set for encryption decisions only (see _legacy_globstar_match).
 
     Returns:
         True if any pattern matched.
     """
+    # 候補はPOSIX形式の文字列で1回だけ作る（ファイル数×パターン数で呼ばれるため）
+    file_str = str(PurePosixPath(file_path))
+    # ".." を含むdirect pathでも判定できるよう、正規化した形も候補に加える（和集合）
+    normalized_str = str(PurePosixPath(os.path.normpath(file_path)))
+    candidates = [file_str, file_path.name, normalized_str]
+    home_prefix = str(PurePosixPath(Path.home())) + "/"
+    for path_str in (file_str, normalized_str):
+        if path_str.startswith(home_prefix):
+            candidates.append(path_str[len(home_prefix) :])
+    if relative_path is not None:
+        candidates.append(str(PurePosixPath(relative_path)))
+        candidates.append(str(PurePosixPath(os.path.normpath(relative_path))))
+    candidates = list(dict.fromkeys(candidates))
+
     for pattern in patterns:
-        if matches_glob_pattern(file_path, pattern):
+        if "**" in pattern:
+            regex = _compile_globstar_pattern(pattern)
+            if any(regex.match(candidate) for candidate in candidates):
+                return True
+            if legacy_globstar and any(
+                _legacy_globstar_match(candidate, pattern) for candidate in candidates
+            ):
+                return True
+        # basenameも候補にあるため、各候補の全体マッチでmatches_glob_patternと同じ判定になる
+        elif any(fnmatch.fnmatch(candidate, pattern) for candidate in candidates):
             return True
     return False
+
+
+def normalize_direct_path(entry: str) -> str:
+    """
+    Normalize a config direct-path entry for exact matching.
+
+    Backslashes are config-side separators; '.', '..' and duplicate
+    separators are collapsed so ``./app/conf`` and ``sub/../keep.txt`` match
+    the scanned paths ``app/conf`` and ``keep.txt``.
+    """
+    return os.path.normpath(entry.replace("\\", "/"))
 
 
 # Glob special characters pattern for direct path detection
@@ -359,6 +523,9 @@ def machine_name_violation(name: object) -> str | None:
         return "must not be '.' or '..'"
     if "/" in name or "\\" in name:
         return "must not contain path separators"
+    if name.startswith("."):
+        # .git / .github 等のリポジトリ管理用ディレクトリと衝突させない
+        return "must not start with '.'"
     if "\0" in name:
         return "must not contain NUL characters"
     if WINDOWS_DRIVE_PATTERN.match(name):
@@ -438,3 +605,111 @@ def destination_violation(
         return f"cannot be resolved ({e})"
 
     return None
+
+
+# アーカイブ実行ディレクトリ名: YYYYmmdd_HHMMSS（同一秒の衝突時は _1, _2, ...）
+ARCHIVE_RUN_NAME_PATTERN = re.compile(r"^(\d{8}_\d{6})(?:_([1-9]\d*))?$")
+ARCHIVE_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
+
+
+def create_unique_archive_dir(parent: Path, timestamp: str) -> Path:
+    """
+    Create a new archive run directory that no earlier run has used.
+
+    The directory is ``parent/<timestamp>``; when that already exists (two
+    runs within the same second) ``_1``, ``_2``, ... is appended. The
+    directory is created with ``exist_ok=False`` so a run never writes into
+    another run's archive.
+
+    Args:
+        parent: Directory holding archive runs.
+        timestamp: Run timestamp (YYYYmmdd_HHMMSS).
+
+    Returns:
+        The created directory.
+    """
+    parent.mkdir(parents=True, exist_ok=True)
+    suffix = 0
+    while True:
+        name = timestamp if suffix == 0 else f"{timestamp}_{suffix}"
+        candidate = parent / name
+        try:
+            candidate.mkdir()
+            return candidate
+        except FileExistsError:
+            suffix += 1
+
+
+def parse_archive_run_name(name: str) -> tuple[datetime, int] | None:
+    """
+    Parse an archive run directory name.
+
+    Args:
+        name: Directory name such as ``20250102_030405`` or ``20250102_030405_1``.
+
+    Returns:
+        (created, suffix) or None when the name is not an archive run.
+    """
+    match = ARCHIVE_RUN_NAME_PATTERN.match(name)
+    if not match:
+        return None
+    try:
+        created = datetime.strptime(match.group(1), ARCHIVE_TIMESTAMP_FORMAT)
+    except ValueError:
+        return None
+    return created, int(match.group(2) or 0)
+
+
+def write_private_file(path: Path, data: bytes) -> None:
+    """
+    Write data, creating the file readable by the owner only.
+
+    A new file is created with mode 0o600 from the start (no window where it
+    is world-readable). An existing file keeps its current mode.
+
+    Args:
+        path: Destination file.
+        data: Content to write.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+
+
+def make_dirs(directory: Path, mode: int = 0o777) -> list[Path]:
+    """
+    Create directory and any missing parents with mode (umask applies).
+
+    Existing directories are left unchanged.
+
+    Args:
+        directory: Directory to create.
+        mode: Mode for each created directory.
+
+    Returns:
+        The directories that were created, outermost first.
+    """
+    missing = []
+    current = directory
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    created = list(reversed(missing))
+    for path in created:
+        path.mkdir(mode=mode, exist_ok=True)
+    return created
+
+
+def make_private_dirs(directory: Path) -> list[Path]:
+    """
+    Create directory and any missing parents with mode 0o700.
+
+    Existing directories are left unchanged.
+
+    Args:
+        directory: Directory to create.
+
+    Returns:
+        The directories that were created, outermost first.
+    """
+    return make_dirs(directory, 0o700)

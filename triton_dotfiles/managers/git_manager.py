@@ -4,6 +4,7 @@ Module for managing Git operations.
 """
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Dict, Any
@@ -166,7 +167,8 @@ class GitManager:
                     "error": result.stderr,
                 }
 
-            status_output = result.stdout.strip()
+            # 先頭の空白はステータス列（" M" = 未ステージ）なので末尾の改行だけ落とす
+            status_output = result.stdout.rstrip("\n")
 
             # 出力が空ならクリーン
             if not status_output:
@@ -322,6 +324,7 @@ class GitManager:
             - ahead: upstreamより先行しているコミット数（未push）
             - behind: upstreamより遅れているコミット数
             - has_upstream: upstreamが設定されているか
+            - upstream_gone: upstreamが設定されているがリモートから消えているか
         """
         summary = {
             "success": False,
@@ -329,6 +332,7 @@ class GitManager:
             "ahead": 0,
             "behind": 0,
             "has_upstream": False,
+            "upstream_gone": False,
         }
 
         if not self.is_git_repository():
@@ -350,6 +354,8 @@ class GitManager:
             if lines and lines[0].startswith("##"):
                 header = lines[0]
                 summary["has_upstream"] = "..." in header
+                # ヘッダー例: "## main...origin/main [gone]"
+                summary["upstream_gone"] = header.endswith(" [gone]")
                 ahead_match = re.search(r"\[ahead (\d+)", header)
                 if ahead_match:
                     summary["ahead"] = int(ahead_match.group(1))
@@ -510,13 +516,22 @@ class GitManager:
                 "error": f"Directory not found: {machine_dir}",
             }
 
+        pathspec = self._machine_pathspec(machine_name)
+
         if dry_run:
             today = datetime.now().strftime("%Y-%m-%d")
+            commit_message = f"updated {machine_name} {today}"
+            commands = [
+                ["git", "add", "--", pathspec],
+                ["git", "commit", "-m", commit_message, "--", pathspec],
+                ["git", "push"],
+            ]
             return {
                 "success": True,
                 "message": f"Would execute git add, commit, and push for {machine_name}",
-                "output": f'[DRY RUN] git add {machine_name}/ && git commit -m "updated {machine_name} {today}" && git push',
+                "output": "[DRY RUN] " + " && ".join(map(shlex.join, commands)),
                 "error": "",
+                "other_staged": self._other_staged_paths(machine_name),
             }
 
         try:
@@ -551,9 +566,43 @@ class GitManager:
             if not add_result["success"]:
                 return add_result
 
+            # マシンフォルダ外で既にステージされている変更はコミットせずそのまま残す
+            other_staged = self._other_staged_paths(machine_name)
+
             # Step 1.5: Check if there are staged changes
-            staged_check = self._has_staged_changes()
+            staged_check = self._has_staged_changes(pathspec)
             if staged_check["success"] and not staged_check["has_staged"]:
+                # 前回pushだけ失敗した等で未pushのコミットが残っていればpushする。
+                # upstream未設定・消失・取得失敗で乖離が分からない場合も
+                # up-to-dateとは言えないのでpushを試み、その結果をそのまま返す
+                summary = self.get_status_summary()
+                ahead = summary["ahead"]
+                remote_known = (
+                    summary["success"]
+                    and summary["has_upstream"]
+                    and not summary["upstream_gone"]
+                )
+                if ahead > 0 or not remote_known:
+                    push_result = self._push_changes()
+                    push_result["other_staged"] = other_staged
+                    if not push_result["success"]:
+                        return push_result
+                    pushed = (
+                        f"pushed {ahead} existing commit(s)"
+                        if remote_known
+                        else "pushed (remote state was unknown)"
+                    )
+                    return {
+                        "success": True,
+                        "message": f"Nothing new to commit for {machine_name}; {pushed}",
+                        "output": "\n".join(
+                            filter(None, [add_result["output"], push_result["output"]])
+                        ),
+                        "error": "",
+                        "pushed_existing": ahead,
+                        "other_staged": other_staged,
+                    }
+
                 # No changes to commit - this is a success, not an error
                 return {
                     "success": True,
@@ -561,16 +610,19 @@ class GitManager:
                     "output": add_result["output"],
                     "error": "",
                     "skipped": True,
+                    "other_staged": other_staged,
                 }
 
             # Step 2: git commit
-            commit_result = self._commit_changes(commit_message)
+            commit_result = self._commit_changes(commit_message, pathspec)
             if not commit_result["success"]:
+                commit_result["other_staged"] = other_staged
                 return commit_result
 
             # Step 3: git push
             push_result = self._push_changes()
             if not push_result["success"]:
+                push_result["other_staged"] = other_staged
                 return push_result
 
             # 全て成功
@@ -586,6 +638,7 @@ class GitManager:
                 "output": "\n".join(filter(None, all_output)),
                 "error": "",
                 "commit_message": commit_message,
+                "other_staged": other_staged,
             }
 
         except Exception as e:
@@ -617,8 +670,37 @@ class GitManager:
             timeout=timeout,
         )
 
-    def _has_staged_changes(self) -> Dict[str, Any]:
+    @staticmethod
+    def _machine_pathspec(machine_name: str) -> str:
+        """マシンフォルダを指すpathspec
+
+        マシン名のglob文字（*, [x]）やpathspecマジック（:!）を解釈させないため
+        literalマジックを付ける。先頭の "-" は呼び出し側で "--" の後に置いて防ぐ。
+        """
+        return f":(literal){machine_name}/"
+
+    def _other_staged_paths(self, machine_name: str) -> list[str]:
+        """マシンフォルダ外でステージされているパスの一覧（取得失敗時は空）"""
+        try:
+            result = self._run_git_command(
+                ["diff", "--cached", "--name-only", "-z"], timeout=10
+            )
+        except (subprocess.SubprocessError, OSError):
+            return []
+        if result.returncode != 0:
+            return []
+        prefix = f"{machine_name}/"
+        return [
+            path
+            for path in result.stdout.split("\0")
+            if path and not path.startswith(prefix)
+        ]
+
+    def _has_staged_changes(self, pathspec: str | None = None) -> Dict[str, Any]:
         """ステージされた変更があるかチェック
+
+        Args:
+            pathspec: 指定時はこのpathspec配下だけを対象にする
 
         Returns:
             チェック結果の辞書:
@@ -626,7 +708,10 @@ class GitManager:
             - has_staged: ステージされた変更があるかどうか
         """
         try:
-            result = self._run_git_command(["diff", "--cached", "--quiet"], timeout=10)
+            args = ["diff", "--cached", "--quiet"]
+            if pathspec:
+                args += ["--", pathspec]
+            result = self._run_git_command(args, timeout=10)
             # returncode 0 = no diff (staging area is clean)
             # returncode 1 = has diff (there are staged changes)
             return {
@@ -643,9 +728,10 @@ class GitManager:
     def _add_machine_files(self, machine_name: str) -> Dict[str, Any]:
         """マシンファイルをgit addする"""
         try:
-            result = self._run_git_command(["add", f"{machine_name}/"])
+            pathspec = self._machine_pathspec(machine_name)
+            result = self._run_git_command(["add", "--", pathspec])
 
-            output = f"=== git add {machine_name}/ ==="
+            output = f"=== {shlex.join(['git', 'add', '--', pathspec])} ==="
             if result.stdout:
                 output += f"\n{result.stdout.strip()}"
 
@@ -677,12 +763,13 @@ class GitManager:
                 "error": str(e),
             }
 
-    def _commit_changes(self, commit_message: str) -> Dict[str, Any]:
-        """変更をcommitする"""
+    def _commit_changes(self, commit_message: str, pathspec: str) -> Dict[str, Any]:
+        """pathspec配下の変更だけをcommitする（他のステージ済み変更は残る）"""
         try:
-            result = self._run_git_command(["commit", "-m", commit_message])
+            args = ["commit", "-m", commit_message, "--", pathspec]
+            result = self._run_git_command(args)
 
-            output = f'=== git commit -m "{commit_message}" ==='
+            output = f"=== {shlex.join(['git', *args])} ==="
             if result.stdout:
                 output += f"\n{result.stdout.strip()}"
 

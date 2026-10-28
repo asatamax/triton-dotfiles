@@ -417,7 +417,7 @@ class TestPatternSemanticsMatchBackup:
 
         assert result["would_delete"] == [".app/a.log"]
 
-    def test_direct_path_wins_over_later_negation(self, env):
+    def test_later_negation_excludes_direct_path(self, env):
         place(env, "proj/sub/keep.json")
         place(env, "proj/sub/other.json")
         place(env, "proj/top.json")
@@ -431,11 +431,14 @@ class TestPatternSemanticsMatchBackup:
                 }
             ],
         )
-        assert collected(fm) == {"sub/keep.json", "top.json"}
+        assert collected(fm) == {"top.json"}
 
         result = fm.cleanup_repository_files(MACHINE, dry_run=True)
 
-        assert result["would_delete"] == ["proj/sub/other.json"]
+        assert sorted(result["would_delete"]) == [
+            "proj/sub/keep.json",
+            "proj/sub/other.json",
+        ]
 
 
 class TestRepoSideOrphanAndStale:

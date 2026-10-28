@@ -10,7 +10,11 @@ from pathlib import Path
 from colorama import Fore, Style
 from .validation_display import ValidationDisplay
 
-from .utils import import_class_from_module, get_triton_dir
+from .utils import (
+    import_class_from_module,
+    get_triton_dir,
+    parse_archive_run_name,
+)
 from .__version__ import get_version
 
 ConfigManager = import_class_from_module("config", "ConfigManager")
@@ -18,6 +22,9 @@ create_default_config = import_class_from_module("config", "create_default_confi
 FileManager = import_class_from_module("managers.file_manager", "FileManager")
 EncryptionManager = import_class_from_module("encryption", "get_encryption_manager")
 create_encryption_key = import_class_from_module("encryption", "create_encryption_key")
+ARCHIVE_OUTSIDE_HOME_DIR = import_class_from_module(
+    "managers.file_manager", "ARCHIVE_OUTSIDE_HOME_DIR"
+)
 
 
 def set_triton_dir(triton_dir: str) -> None:
@@ -359,6 +366,9 @@ def backup(ctx, dry_run, machine, verbose):
                 f"\nNext step: {Fore.CYAN}triton git-commit-push{Style.RESET_ALL}"
             )
 
+        if results["errors"]:
+            sys.exit(1)
+
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
@@ -390,7 +400,7 @@ def restore(ctx, source_machine, target, files, dry_run):
                 f"{Fore.RED}Error: Machine '{source_machine}' not found{Style.RESET_ALL}"
             )
             click.echo(f"Available machines: {', '.join(available_machines)}")
-            return
+            sys.exit(1)
 
         if not dry_run:
             current_machine = target or config_manager.get_machine_name()
@@ -438,6 +448,9 @@ def restore(ctx, source_machine, target, files, dry_run):
             click.echo("  chmod 600 ~/.ssh/config")
             click.echo("  chmod 700 ~/.ssh")
 
+        if results["errors"]:
+            sys.exit(1)
+
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
@@ -472,7 +485,7 @@ def export(ctx, source_machine, file_pattern, output_path, no_decrypt, dry_run):
                 f"{Fore.RED}Error: Machine '{source_machine}' not found{Style.RESET_ALL}"
             )
             click.echo(f"Available machines: {', '.join(available_machines)}")
-            return
+            sys.exit(1)
 
         # Execute export
         decrypt = not no_decrypt
@@ -706,10 +719,17 @@ def _get_git_status_string(file_manager: FileManager) -> str:
         wd_result = git_manager.is_working_directory_clean()
         is_clean = wd_result.get("is_clean", False)
 
-        # Check remote status
+        # fetchでリモート情報を最新化してから、ahead/behindはローカルの追跡情報から得る
         remote_result = git_manager.check_remote_status()
-        ahead = remote_result.get("ahead", 0)
-        behind = remote_result.get("behind", 0)
+        summary = git_manager.get_status_summary()
+        remote_known = (
+            remote_result.get("success", False)
+            and summary["success"]
+            and summary["has_upstream"]
+        )
+        upstream_gone = remote_known and summary["upstream_gone"]
+        ahead = summary["ahead"]
+        behind = summary["behind"]
 
         # Build status string
         parts = []
@@ -718,7 +738,11 @@ def _get_git_status_string(file_manager: FileManager) -> str:
         else:
             parts.append(f"{Fore.YELLOW}dirty{Style.RESET_ALL}")
 
-        if ahead > 0 and behind > 0:
+        if upstream_gone:
+            parts.append(f"{Fore.YELLOW}upstream gone{Style.RESET_ALL}")
+        elif not remote_known:
+            parts.append(f"{Fore.YELLOW}remote unknown{Style.RESET_ALL}")
+        elif ahead > 0 and behind > 0:
             parts.append(f"{Fore.YELLOW}↑{ahead} ↓{behind}{Style.RESET_ALL}")
         elif ahead > 0:
             parts.append(f"{Fore.YELLOW}↑{ahead} unpushed{Style.RESET_ALL}")
@@ -1041,6 +1065,7 @@ def git_pull(ctx, dry_run):
                 for line in result["error"].strip().split("\n"):
                     if line.strip():
                         click.echo(f"  {line}")
+            sys.exit(1)
 
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -1080,6 +1105,15 @@ def git_commit_push(ctx, machine, dry_run, yes):
         # Execute git commit push
         result = file_manager.git_commit_push_repository(machine_name, dry_run=dry_run)
 
+        other_staged = result.get("other_staged") or []
+        if other_staged:
+            click.echo(
+                f"{Fore.YELLOW}Warning: {len(other_staged)} staged path(s) outside "
+                f"{machine_name}/ are not committed and remain staged:{Style.RESET_ALL}"
+            )
+            for path in other_staged:
+                click.echo(f"  {path}")
+
         if result["success"]:
             click.echo(f"{Fore.GREEN}{result['message']}{Style.RESET_ALL}")
             if result["output"]:
@@ -1102,7 +1136,9 @@ def git_commit_push(ctx, machine, dry_run, yes):
                 click.echo(
                     f"{Fore.YELLOW}Warning: The remote repository has newer changes.{Style.RESET_ALL}"
                 )
-                click.echo("Please run 'triton pull' first to get the latest changes.")
+                click.echo(
+                    "Please run 'triton git-pull' first to get the latest changes."
+                )
                 if result.get("commits_behind", 0) > 0:
                     click.echo(
                         f"Remote is ahead by {result['commits_behind']} commit(s)."
@@ -1119,6 +1155,7 @@ def git_commit_push(ctx, machine, dry_run, yes):
                 for line in result["error"].strip().split("\n"):
                     if line.strip():
                         click.echo(f"  {line}")
+            sys.exit(1)
 
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -1252,17 +1289,13 @@ def cleanup_repository(ctx, machine, dry_run):
                     click.echo(f"  - {error}")
 
             if results["deleted"]:
-                click.echo(f"\n{Fore.CYAN}Next steps:{Style.RESET_ALL}")
-                repo_path = file_manager.repo_root
-                click.echo(f"  git -C {repo_path} add .")
+                # git add . はリポジトリ全体（他マシンのフォルダ）まで巻き込むため案内しない
                 click.echo(
-                    f'  git -C {repo_path} commit -m "cleanup({target_machine}): remove orphaned and excluded files"'
+                    f"\nNext step: {Fore.CYAN}triton git-commit-push{Style.RESET_ALL}"
                 )
-                click.echo(f"  git -C {repo_path} push")
-                click.echo(f"\n{Fore.YELLOW}Or as one-liner:{Style.RESET_ALL}")
-                click.echo(
-                    f'  (cd {repo_path} && git add . && git commit -m "cleanup({target_machine}): remove orphaned and excluded files" && git push)'
-                )
+
+        if results.get("errors"):
+            sys.exit(1)
 
     except ValueError as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -1339,6 +1372,10 @@ def hooks_run(ctx, dry_run):
                     click.echo(f"   Duration: {r['duration_ms']:.0f}ms")
 
             click.echo(f"\n{result['summary']}")
+
+            # 失敗・タイムアウト（skipped）を含めて全hookが成功しなければ失敗扱い
+            if not result["success"]:
+                sys.exit(1)
 
     except FileNotFoundError:
         click.echo(f"{Fore.RED}Error: Config file not found{Style.RESET_ALL}")
@@ -2717,8 +2754,6 @@ def archive_cmd(ctx, show_schema):
 
 def _get_archive_info(archive_path: Path) -> dict:
     """Get information about an archive directory."""
-    from datetime import datetime
-
     # Determine archive type based on path structure
     # archives/config/{timestamp}/ -> config
     # archives/{timestamp}/ -> restore
@@ -2728,11 +2763,9 @@ def _get_archive_info(archive_path: Path) -> dict:
     else:
         archive_type = "restore"
 
-    # Parse timestamp
-    try:
-        created = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
-    except ValueError:
-        created = None
+    # 同一秒の衝突時は {timestamp}_{N} になる
+    parsed = parse_archive_run_name(timestamp_str)
+    created, suffix = parsed if parsed else (None, 0)
 
     # Count files
     files = list(archive_path.rglob("*"))
@@ -2744,6 +2777,7 @@ def _get_archive_info(archive_path: Path) -> dict:
         "type": archive_type,
         "timestamp": timestamp_str,
         "created": created,
+        "suffix": suffix,
         "file_count": file_count,
         "total_size": total_size,
     }
@@ -2758,23 +2792,32 @@ def _get_all_archives(archives_root: Path) -> list[dict]:
     if not archives_root.exists():
         return archives
 
-    # Find restore archives (direct timestamp directories)
-    for entry in archives_root.iterdir():
-        if entry.is_dir() and entry.name != "config":
-            # Check if it looks like a timestamp directory
-            if len(entry.name) == 15 and "_" in entry.name:
-                archives.append(_get_archive_info(entry))
-
-    # Find config archives
+    # restore: archives/{run}/, config: archives/config/{run}/
     config_dir = archives_root / "config"
-    if config_dir.exists():
-        for entry in config_dir.iterdir():
-            if entry.is_dir():
+    for parent in (archives_root, config_dir):
+        if not parent.is_dir():
+            continue
+        for entry in parent.iterdir():
+            if entry.is_dir() and parse_archive_run_name(entry.name):
                 archives.append(_get_archive_info(entry))
 
-    # Sort by creation time (newest first)
-    archives.sort(key=lambda x: x["created"] or datetime.min, reverse=True)
+    # Sort by creation time, then collision suffix (newest first)
+    archives.sort(
+        key=lambda x: (x["created"] or datetime.min, x["suffix"]), reverse=True
+    )
     return archives
+
+
+def _archived_file_display_path(rel_path: Path) -> str:
+    """Show an archived file as its original location.
+
+    Files from outside the home directory are stored under the reserved
+    ``_root/`` subdirectory mirroring their absolute path; home files keep
+    their home-relative path.
+    """
+    if rel_path.parts and rel_path.parts[0] == ARCHIVE_OUTSIDE_HOME_DIR:
+        return "/" + "/".join(rel_path.parts[1:])
+    return str(rel_path)
 
 
 def _format_size(size_bytes: int) -> str:
@@ -2859,6 +2902,15 @@ def archive_show(timestamp, as_json):
 
     archives_root = get_triton_dir() / "archives"
 
+    # 名前をそのままパスに使うので、アーカイブ名の形式以外（../ 等）は拒否する
+    if not parse_archive_run_name(timestamp):
+        click.echo(
+            f"{Fore.RED}Error: Invalid archive name: {timestamp}{Style.RESET_ALL}"
+        )
+        click.echo("Expected YYYYMMDD_HHMMSS or YYYYMMDD_HHMMSS_N.")
+        click.echo("Use 'triton archive list' to see available archives.")
+        sys.exit(1)
+
     # Find the archive (could be in archives/ or archives/config/)
     archive_path = None
     archive_type = None
@@ -2890,7 +2942,8 @@ def archive_show(timestamp, as_json):
             rel_path = f.relative_to(archive_path)
             files.append(
                 {
-                    "path": str(rel_path),
+                    "path": _archived_file_display_path(rel_path),
+                    "stored_path": str(rel_path),
                     "size": f.stat().st_size,
                 }
             )
@@ -2930,11 +2983,16 @@ def archive_show(timestamp, as_json):
 
 
 @archive_cmd.command("clean")
-@click.option("--keep", type=int, default=None, help="Keep the most recent N archives")
+@click.option(
+    "--keep",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Keep the most recent N archives",
+)
 @click.option(
     "--older-than",
     "older_than_days",
-    type=int,
+    type=click.IntRange(min=0),
     default=None,
     help="Delete archives older than N days",
 )

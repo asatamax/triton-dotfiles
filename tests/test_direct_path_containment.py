@@ -285,7 +285,7 @@ class TestBackupSymlinkContainment:
         assert results["errors"] == []
         assert (env["backup_dir"] / ".zshrc").read_bytes() == b"new"
 
-    def test_machine_dir_symlinked_still_backs_up(self, env):
+    def test_machine_dir_symlinked_refused(self, env):
         real_machine = env["tmp"] / "real_machine"
         real_machine.mkdir()
         env["backup_dir"].rmdir()
@@ -293,10 +293,10 @@ class TestBackupSymlinkContainment:
         write_file(env["home"] / ".config" / "app" / "conf.yml", b"c")
         fm = make_file_manager(env, [{"path": "~/.config/app", "recursive": True}])
 
-        results = fm.backup_files(MACHINE)
+        with pytest.raises(ValueError, match="symlink"):
+            fm.backup_files(MACHINE)
 
-        assert results["errors"] == []
-        assert (real_machine / ".config" / "app" / "conf.yml").read_bytes() == b"c"
+        assert list(real_machine.iterdir()) == []
 
 
 class TestBackupDestinationEdgeCases:
@@ -610,7 +610,7 @@ class TestMachineNameValidation:
 
         assert any("repository.machine_name" in e for e in errors), errors
 
-    def test_symlinked_machine_dir_still_supported(self, env):
+    def test_symlinked_machine_dir_refused(self, env):
         real_machine = env["tmp"] / "real_machine"
         real_machine.mkdir()
         env["backup_dir"].rmdir()
@@ -618,10 +618,10 @@ class TestMachineNameValidation:
         write_file(env["home"] / ".zshrc", b"new")
         fm = make_file_manager(env, [{"path": "~", "files": [".zshrc"]}])
 
-        results = fm.backup_files(MACHINE)
+        with pytest.raises(ValueError, match="symlink"):
+            fm.backup_files(MACHINE)
 
-        assert results["errors"] == []
-        assert (real_machine / ".zshrc").read_bytes() == b"new"
+        assert not (real_machine / ".zshrc").exists()
 
 
 class TestWizardMachineName:

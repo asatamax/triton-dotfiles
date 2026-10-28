@@ -41,7 +41,7 @@ config:
 |-----|------|---------|-------------|
 | `path` | string | - | **Required.** Backup destination directory |
 | `use_hostname` | boolean | `true` | Auto-detect machine name from hostname |
-| `machine_name` | string | - | Override auto-detected machine name. Must be a single folder name: not empty, not `.` or `..`, no `/` or `\`, no drive letter (`C:`). The auto-detected name must satisfy the same rule; if it does not, set `machine_name` |
+| `machine_name` | string | - | Override auto-detected machine name. Must be a single folder name: not empty, not starting with `.`, no `/` or `\`, no drive letter (`C:`). The auto-detected name must satisfy the same rule; if it does not, set `machine_name` |
 | `auto_pull` | boolean | `true` | Run `git pull` when TUI starts |
 | `excluded_directories` | list | - | Directories to exclude from machine detection |
 
@@ -123,6 +123,12 @@ config:
 **Encryption priority:**
 1. `target.encrypt_files` (if specified for a target)
 2. Global `encrypt_list`
+
+When `encryption.enabled` is `false`, files matching `encrypt_list` or a target's `encrypt_files` are **excluded** from backup rather than stored in plaintext. Encrypted copies already in the repository are kept. `triton config validate` warns when a target sets `encrypt_files` while encryption is disabled.
+
+The key file (`encryption.key_file`, wherever it is located) is never backed up.
+
+Decrypted files written by restore and export are created readable by the owner only (`0600`), and directories created for them get `0700`. Files that already exist keep their permissions.
 
 **File transformation:**
 ```
@@ -212,6 +218,23 @@ Triton uses gitignore-like pattern syntax.
 | `config.*` | Files starting with `config.` |
 | `.zshrc` | Exact filename match |
 
+### Global Patterns (blacklist / encrypt_list)
+
+Global patterns are matched against several forms of a file's path. A pattern matches if it matches **any** of them:
+
+- the file name (`*.log`, `credentials`)
+- the absolute path (`*/OpenVPN/*/config.conf`)
+- the path relative to the home directory (`.config/app/cache/*`)
+- the path relative to the target (`sso/cache/*` for target `~/.aws`, `.git/**` for any target)
+
+### Wildcards
+
+- `*` and `?` match within one path segment (never `/`) in patterns containing `**`.
+- `**` as a whole segment matches zero or more directories; a trailing `**` matches everything below.
+- `[abc]` and `[!abc]` are character classes as in shell globbing, so `[old]` matches one of `o`, `l`, `d`. Write `[[]old]` to match the literal name `[old]`.
+- Other characters, such as `(`, `)`, `+`, are literal.
+- A pattern that cannot be compiled (for example `**/[z-a]`) is reported as an error by `triton config validate` and stops backup instead of silently matching nothing.
+
 ### Exclusion Patterns
 
 Prefix with `!` to exclude:
@@ -228,7 +251,7 @@ files:
 2. **Inclusion patterns** - Define what to collect
 3. **Exclusion patterns** (`!`) - Refine collection
 
-Patterns are evaluated sequentially. **Last match wins** (re-inclusion supported).
+Patterns are evaluated sequentially. **Last match wins** (re-inclusion supported). This applies to direct paths too: in `files: ["app/.env", "!app/.env"]` the later `!app/.env` excludes the file.
 
 Excluding files only stops future backups; copies already in the repository stay there. To remove them, run `triton cleanup-repository --dry-run` to review the files listed as `Excluded`, then run `triton cleanup-repository`. Files under no configured target are kept.
 

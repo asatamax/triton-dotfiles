@@ -15,10 +15,14 @@ from dataclasses import dataclass, field
 import yaml
 
 from .utils import (
+    ARCHIVE_TIMESTAMP_FORMAT,
+    create_unique_archive_dir,
     direct_path_violation,
     get_triton_dir,
+    glob_pattern_error,
     is_direct_path,
     machine_name_violation,
+    matches_any_pattern,
 )
 
 # direct path（"/"を含むglobでないfiles項目）に課す規則。検証・追加時のメッセージで共有する
@@ -363,6 +367,8 @@ class ConfigManager:
         self.config_path = Path(config_path)
         self._config = None
         self._missing_env_vars = set()
+        # (読み込んだConfig, encrypt_filesを持つtargetと正規化済みパス) のキャッシュ
+        self._encrypt_roots_cache: tuple[Config, list] | None = None
 
     def load_config(self) -> Config:
         """設定ファイルを読み込み（環境変数展開含む）"""
@@ -487,6 +493,12 @@ class ConfigManager:
                                 f"✗Target {i}, encrypt_files {j}: empty or invalid pattern"
                             )
 
+                    if not self.config.encryption.enabled:
+                        warnings.append(
+                            f"!Target {i}: encrypt_files is set but encryption is "
+                            "disabled; matching files are excluded from backup"
+                        )
+
                 # 論理性のチェック（情報提供）
                 if target.recursive and target.files:
                     warnings.append(
@@ -506,6 +518,9 @@ class ConfigManager:
 
         # マシン名のチェック（リポジトリ直下の1要素として安全であること）
         errors.extend(self._machine_name_errors())
+
+        # パターンの構文チェック（不正なパターンを黙ってマッチなし扱いにしない）
+        errors.extend(self._pattern_errors())
 
         # リポジトリパスのチェック
         if not self.config.repository.path:
@@ -538,20 +553,94 @@ class ConfigManager:
         """パスを展開（~やシェル変数を解決）"""
         return Path(os.path.expandvars(os.path.expanduser(path)))
 
-    def is_blacklisted(self, file_path: Path) -> bool:
-        """ファイルがblacklistに該当するかチェック"""
-        from .utils import matches_any_pattern
+    def is_blacklisted(
+        self, file_path: Path, relative_path: Path | None = None
+    ) -> bool:
+        """ファイルがblacklistに該当するかチェック
 
-        return matches_any_pattern(file_path, self.config.blacklist)
+        Args:
+            file_path: チェック対象のファイルパス（絶対パス）
+            relative_path: targetのpathからの相対パス（分かる場合）
+        """
+        return matches_any_pattern(file_path, self.config.blacklist, relative_path)
 
     def should_encrypt(self, file_path: Path) -> bool:
-        """ファイルが暗号化対象かチェック（グローバルencrypt_listのみ）"""
+        """ファイルが暗号化対象かチェック（encrypt_listと、ファイルを含む全targetのencrypt_files）"""
         if not self.config.encryption.enabled:
             return False
 
-        from .utils import matches_any_pattern
+        return self._matches_encrypt_patterns(file_path, None, None)
 
-        return matches_any_pattern(file_path, self.config.encrypt_list)
+    def _matches_encrypt_patterns(
+        self,
+        file_path: Path,
+        target: "Target | None",
+        relative_path: Path | None,
+    ) -> bool:
+        """グローバルencrypt_list、またはファイルを含む全targetのencrypt_filesにマッチするか
+
+        暗号化の要否はファイル単位で決める。同じファイルを複数のtargetが扱う場合
+        （~/.app と ~ の direct path など）に、encrypt_files を持たないtarget側の判定で
+        平文が書かれ .enc が stale として削除されるのを防ぐため、ファイルを含む
+        すべてのtargetの encrypt_files を、それぞれのtargetからの相対パスで評価する。
+
+        暗号化判定では v1.3.1 までの "**" 変換でのマッチも受け入れる。変換の修正で
+        マッチしなくなったファイルが平文に戻る（既存の .enc が stale 扱いで消える）のを防ぐ。
+        blacklist と target.files の判定は新しい変換のみを使う。
+
+        Args:
+            file_path: チェック対象のファイルパス（絶対パス）
+            target: 呼び出し側が処理中のTarget（分かる場合）
+            relative_path: そのtargetからの相対パス（分かる場合、正規化前の表記可）
+        """
+        if matches_any_pattern(
+            file_path, self.config.encrypt_list, relative_path, legacy_globstar=True
+        ):
+            return True
+
+        return any(
+            matches_any_pattern(
+                scope_relative, scope_target.encrypt_files, legacy_globstar=True
+            )
+            for scope_target, scope_relative in self._encrypt_files_scopes(
+                file_path, target, relative_path
+            )
+        )
+
+    def _encrypt_files_scopes(
+        self,
+        file_path: Path,
+        target: "Target | None",
+        relative_path: Path | None,
+    ) -> list[tuple["Target", Path]]:
+        """encrypt_filesを持ち、ファイルを含むtargetと、そのtargetからの相対パスを列挙"""
+        scopes = []
+        if target is not None and target.encrypt_files and relative_path is not None:
+            scopes.append((target, relative_path))
+
+        if not file_path.is_absolute():
+            return scopes
+
+        normalized_file = os.path.normpath(file_path)
+        for other, root in self._encrypt_target_roots():
+            prefix = root if root.endswith(os.sep) else root + os.sep
+            if normalized_file.startswith(prefix):
+                scopes.append((other, Path(normalized_file[len(prefix) :])))
+        return scopes
+
+    def _encrypt_target_roots(self) -> list[tuple["Target", str]]:
+        """encrypt_filesを持つtargetと正規化済みのパス（読み込んだ設定ごとに1回だけ計算）"""
+        config = self.config
+        cache = self._encrypt_roots_cache
+        if cache is None or cache[0] is not config:
+            roots = [
+                (target, os.path.normpath(self.expand_path(target.path)))
+                for target in config.targets
+                if target.encrypt_files
+            ]
+            cache = (config, roots)
+            self._encrypt_roots_cache = cache
+        return cache[1]
 
     def should_encrypt_file(
         self, file_path: Path, target: "Target", relative_path: Path
@@ -575,27 +664,30 @@ class ConfigManager:
         if not self.config.encryption.enabled:
             return False
 
-        from .utils import matches_any_pattern
+        return self._matches_encrypt_patterns(file_path, target, relative_path)
 
-        # 1. target.encrypt_filesを優先チェック（相対パスでマッチング）
-        if target.encrypt_files:
-            if matches_any_pattern(relative_path, target.encrypt_files):
-                return True
+    def should_exclude(
+        self,
+        file_path: Path,
+        target: "Target | None" = None,
+        relative_path: Path | None = None,
+    ) -> bool:
+        """ファイルが除外対象かチェック（blacklistと、暗号化無効時の暗号化対象）
 
-        # 2. グローバルencrypt_listをチェック（絶対パスでマッチング）
-        return matches_any_pattern(file_path, self.config.encrypt_list)
+        暗号化が無効の場合、暗号化対象（グローバルencrypt_listとtarget.encrypt_files）は
+        平文でリポジトリに保存しないよう除外する。
 
-    def should_exclude(self, file_path: Path) -> bool:
-        """ファイルが除外対象かチェック（暗号化無効時のencrypt_listとblacklist）"""
+        Args:
+            file_path: チェック対象のファイルパス（絶対パス）
+            target: 対象のTarget設定（分かる場合）
+            relative_path: targetのpathからの相対パス（分かる場合）
+        """
         # 常にblacklistをチェック
-        if self.is_blacklisted(file_path):
+        if self.is_blacklisted(file_path, relative_path):
             return True
 
-        # 暗号化が無効の場合、encrypt_listも除外対象
         if not self.config.encryption.enabled:
-            from .utils import matches_any_pattern
-
-            return matches_any_pattern(file_path, self.config.encrypt_list)
+            return self._matches_encrypt_patterns(file_path, target, relative_path)
 
         return False
 
@@ -611,6 +703,28 @@ class ConfigManager:
                 return True
 
         return False
+
+    def _pattern_errors(self) -> list[str]:
+        """コンパイルできないパターンを✗エラーとして返す"""
+        sources: list[tuple[str, list]] = [
+            ("blacklist", self.config.blacklist),
+            ("encrypt_list", self.config.encrypt_list),
+        ]
+        for i, target in enumerate(self.config.targets):
+            sources.append((f"Target {i} files", target.files or []))
+            sources.append((f"Target {i} encrypt_files", target.encrypt_files or []))
+
+        errors = []
+        for where, patterns in sources:
+            if not isinstance(patterns, list):
+                continue
+            for pattern in patterns:
+                if not isinstance(pattern, str):
+                    continue
+                reason = glob_pattern_error(pattern.removeprefix("!"))
+                if reason:
+                    errors.append(f"✗{where}: {reason}")
+        return errors
 
     def _machine_name_errors(self) -> list[str]:
         """設定または自動検出されたマシン名が安全なディレクトリ名でなければ✗エラーを返す"""
@@ -796,12 +910,13 @@ class ConfigManager:
             return None
 
         # Use same timestamp format as restore archives
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime(ARCHIVE_TIMESTAMP_FORMAT)
 
-        # Create archive directory: archives/config/{timestamp}/
+        # Create archive directory: archives/config/{timestamp}[_N]/
         triton_dir = get_triton_dir()
-        archive_dir = triton_dir / "archives" / "config" / timestamp
-        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_dir = create_unique_archive_dir(
+            triton_dir / "archives" / "config", timestamp
+        )
 
         # Copy config to archive
         backup_path = archive_dir / self.config_path.name

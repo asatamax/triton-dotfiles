@@ -8,6 +8,7 @@ import importlib.util
 from pathlib import Path
 from typing import Optional, Union
 
+from ..utils import write_private_file
 from .real import EncryptionManager, generate_random_key
 from .dummy import DummyEncryptionManager
 
@@ -68,12 +69,11 @@ def create_encryption_key(
 
     key_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 32バイトのランダムキーを保存
+    # 32バイトのランダムキーを保存（作成時点から所有者のみ読み書き可能）
     key = generate_random_key()
-    with open(key_path, "wb") as f:
-        f.write(key)
+    write_private_file(key_path, key)
 
-    # キーファイルのアクセス権限を所有者のみに制限
+    # --force で既存ファイルを上書きした場合は元の権限が残るため所有者のみに制限
     key_path.chmod(0o600)
 
     return str(key_path)

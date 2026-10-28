@@ -21,6 +21,7 @@ def make_file_manager(
     max_file_size_mb: float | None = None,
     machine_name: str | None = MACHINE,
     use_hostname: bool = False,
+    key_file: Path | None = None,
 ) -> FileManager:
     """Build a FileManager from an in-memory config dict."""
     config: dict = {
@@ -35,7 +36,7 @@ def make_file_manager(
         "encryption": {"enabled": encryption},
     }
     if encryption:
-        config["encryption"]["key_file"] = str(env["tmp"] / "master.key")
+        config["encryption"]["key_file"] = str(key_file or env["tmp"] / "master.key")
     if skip_dirs is not None:
         config["skip_dirs"] = skip_dirs
     if max_file_size_mb is not None:

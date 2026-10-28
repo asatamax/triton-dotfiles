@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from colorama import Fore, Style
 from ...managers.editor_manager import EditorManager
+from ...utils import make_private_dirs
 from ...managers.file_comparison_manager import (
     FileComparisonManager,
     DuplicateDetectionMethod,
@@ -734,8 +735,8 @@ class TUIFileAdapter:
             # デバッグ情報
             # Export request logging - visible in app.log
 
-            # ディレクトリを作成（相対パスの場合のみmkdir -p）
-            os.makedirs(destination_dir, exist_ok=True)
+            # 復号済みファイルの置き場になるので、新規作成するディレクトリは0700
+            make_private_dirs(Path(destination_dir))
             # Directory created - visible in app.log
 
             success_count = 0
@@ -955,17 +956,32 @@ class TUIFileAdapter:
                 machine_name, dry_run=dry_run
             )
 
-            # メッセージを生成
+            # メッセージを生成（実際に何が起きたかをそのまま伝える）
             if dry_run:
                 message = f"[DRY RUN] Would commit and push {machine_name}"
+            elif not result["success"]:
+                message = result.get("message") or (
+                    f"Failed to commit and push {machine_name}"
+                )
+            elif result.get("skipped"):
+                message = f"Nothing to commit for {machine_name} - already up to date"
+            elif "pushed_existing" in result:
+                # コミットせず既存コミットのみpushした
+                message = result["message"]
             else:
-                if result["success"]:
-                    message = f"Successfully committed and pushed {machine_name}"
-                else:
-                    message = f"Failed to commit and push {machine_name}"
+                message = f"Successfully committed and pushed {machine_name}"
 
             # 詳細情報を追加（colorama色付き）
             details = []
+
+            other_staged = result.get("other_staged") or []
+            if other_staged:
+                details.append(
+                    f"{Fore.YELLOW}Staged outside {machine_name}/ "
+                    f"(not committed, still staged):{Style.RESET_ALL}"
+                )
+                details.extend(f"  {path}" for path in other_staged)
+                details.append("")
 
             # コマンド出力を表示
             if result.get("output"):
@@ -980,22 +996,23 @@ class TUIFileAdapter:
                 details.append("")
 
             # 成功時の追加情報
-            if result["success"] and not dry_run:
-                commit_msg = result.get("commit_message", "N/A")
+            if result["success"] and result.get("commit_message") and not dry_run:
                 details.append(f"{Fore.CYAN}Commit Information:{Style.RESET_ALL}")
-                details.append(f"  Commit message: {commit_msg}")
+                details.append(f"  Commit message: {result['commit_message']}")
                 details.append(f"  Machine: {machine_name}")
                 details.append("")
+            if result["success"] and not dry_run and not result.get("skipped"):
                 details.append(
                     f"{Fore.GREEN}✓ Changes have been pushed to the remote repository.{Style.RESET_ALL}"
                 )
 
-            # dry-run時の情報
+            # dry-run時の情報（実際に実行するコマンドはGitManagerのoutputに含まれる）
             if dry_run:
                 details.append(f"{Fore.CYAN}Planned Operations:{Style.RESET_ALL}")
-                details.append(f"  1. git add {machine_name}/")
+                details.append(f"  1. git add {machine_name}/ (this folder only)")
                 details.append(
-                    f'  2. git commit -m "updated {machine_name} YYYY-MM-DD"'
+                    f'  2. git commit -m "updated {machine_name} YYYY-MM-DD" '
+                    f"(only {machine_name}/)"
                 )
                 details.append("  3. git push")
                 details.append("")
@@ -1008,6 +1025,9 @@ class TUIFileAdapter:
                 "message": message,
                 "details": "\n".join(details) if details else "",
                 "result": result,
+                # main_screenのPull Requiredダイアログ判定に使う
+                "need_pull": result.get("need_pull", False),
+                "commits_behind": result.get("commits_behind", 0),
             }
 
         except Exception as e:
