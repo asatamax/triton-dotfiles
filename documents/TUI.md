@@ -68,12 +68,12 @@ m (Select machine) → Review files → Space (Select) → R (Restore)
 
 Existing files are automatically backed up to `~/.config/triton/archives/restore/` before restore.
 
-### Example 3: Cleanup Orphaned Files
+### Example 3: Cleanup Orphaned and Excluded Files
 
-When files deleted locally still exist in the repository (no delete commit):
+When files deleted locally, or files your config no longer backs up, still exist in the repository (no delete commit):
 
 1. **Select your machine** - `m` to select your own machine
-2. **Identify orphaned files** - Files that exist in repository but not locally
+2. **Identify files to remove** - Files that exist in repository but not locally (orphaned), files excluded by the current config (`!` patterns or global blacklist), and stale plaintext/encrypted duplicates
 3. **Cleanup** - Command palette (`Ctrl+P`) → "Repository Cleanup"
 4. **Commit** - `C` to commit the deletion
 
@@ -168,7 +168,7 @@ Select mode swaps the rich preview for a read-only TextArea so the user can mous
 - **Git Pull** - Pull latest changes
 - **Git Commit Push** - Commit and push changes
 - **Select Machine** - Switch to another machine
-- **Repository Cleanup** - Remove orphaned files
+- **Repository Cleanup** - Remove orphaned and excluded files
 - **VSCode Diff** - Open diff in external editor
 - **Edit in VSCode** - Edit local file
 - **Show in Finder** - Reveal in Finder (macOS)

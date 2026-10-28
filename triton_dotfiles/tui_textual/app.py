@@ -45,7 +45,7 @@ class TritonCommandProvider(Provider):
             (
                 "Cleanup Repository",
                 self.app.action_cleanup_repository,
-                "Delete orphaned files from repository (current machine only)",
+                "Delete orphaned and excluded files from repository (current machine only)",
             ),
             (
                 "Select Machine",

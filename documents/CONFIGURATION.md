@@ -187,12 +187,14 @@ config:
 
 ### max_file_size_mb
 
-Skip files larger than this size.
+Skip files larger than this size during backup (default: `3.0`; `0` = no limit). The limit applies to every collected file, including direct paths. Skipped files are reported as `Warning: Skipped (exceeds 3.0MB limit): <path> (4.2MB)` and counted in the backup summary.
 
 ```yaml
 config:
   max_file_size_mb: 5.0  # Skip files > 5MB (0 = no limit)
 ```
+
+The size limit is not a pattern decision: copies of oversized files that are already in the repository are kept by `triton cleanup-repository`.
 
 ---
 
@@ -226,6 +228,8 @@ files:
 3. **Exclusion patterns** (`!`) - Refine collection
 
 Patterns are evaluated sequentially. **Last match wins** (re-inclusion supported).
+
+Excluding files only stops future backups; copies already in the repository stay there. To remove them, run `triton cleanup-repository --dry-run` to review the files listed as `Excluded`, then run `triton cleanup-repository`. Files under no configured target are kept.
 
 ### Examples
 
@@ -376,7 +380,7 @@ triton config settings unset tui.theme  # Reset to default
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `max_file_size_mb` | number | `5.0` | Maximum file size in MB |
+| `max_file_size_mb` | number | `3.0` | Maximum file size in MB (0 = no limit) |
 | `encryption.enabled` | boolean | `false` | Enable encryption |
 | `encryption.key_file` | string | `~/.config/triton/master.key` | Key file path |
 | `repository.path` | string | - | Backup destination (required) |

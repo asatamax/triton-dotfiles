@@ -1067,7 +1067,7 @@ class TUIFileAdapter:
         return self.editor_manager.open_edit(file_info["local_path"], file_info["name"])
 
     def cleanup_repository_files(self, machine_name: str, dry_run: bool = False):
-        """リポジトリから孤立ファイルを削除（ローカルに存在しないファイル）"""
+        """リポジトリから孤立ファイル・除外ファイル・staleファイルを削除"""
         try:
             # 既存のcleanup機能を使用
             result = self.file_manager.cleanup_repository_files(
@@ -1081,7 +1081,7 @@ class TUIFileAdapter:
 
             # メッセージを生成
             if dry_run:
-                message = f"[DRY RUN] Would delete {would_delete_count} orphaned files"
+                message = f"[DRY RUN] Would delete {would_delete_count} orphaned, stale, or excluded files"
             else:
                 message = f"Repository cleanup completed: {deleted_count} files deleted, {error_count} errors"
 

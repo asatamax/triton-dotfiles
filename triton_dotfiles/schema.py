@@ -716,7 +716,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
         "keys": {
             "max_file_size_mb": {
                 "type": "number",
-                "default": 5.0,
+                "default": 3.0,
                 "required": False,
                 "description": "Maximum file size in MB (0 = no limit)",
             },
@@ -1507,7 +1507,7 @@ CONFIG_FILE_SCHEMA: dict[str, Any] = {
             "description": "Skip files larger than this size (0 = no limit)",
             "required": False,
             "type": "number",
-            "default": 5.0,
+            "default": 3.0,
         },
         "tui": {
             "description": "TUI (Terminal User Interface) settings",

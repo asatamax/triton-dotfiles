@@ -1195,7 +1195,7 @@ class MainScreen(Static):
         # result が False の場合は何もしない（ユーザーがキャンセル）
 
     async def cleanup_repository(self):
-        """リポジトリから孤立ファイルを削除（現在のマシンのみ）"""
+        """リポジトリから孤立ファイル・除外ファイルを削除（現在のマシンのみ）"""
         try:
             # 安全性チェック: 現在のマシンかどうか確認
             current_machine = self.file_adapter.config_manager.get_machine_name()
@@ -1219,11 +1219,12 @@ class MainScreen(Static):
 
             # 確認ダイアログを表示（破壊的操作なので慎重に）
             title = "Repository Cleanup Confirmation"
-            message = "Delete orphaned files from repository"
+            message = "Delete orphaned and excluded files from repository"
             submessage = (
                 f"Machine: {current_machine}\n\n"
                 f"This will PERMANENTLY delete files that exist in the repository "
-                f"but not on your local system.\n\n"
+                f"but not on your local system, or that the current config "
+                f"no longer backs up.\n\n"
                 f"Use 'Dry Run' to preview which files would be deleted first."
             )
 
@@ -1257,7 +1258,9 @@ class MainScreen(Static):
         """実際のリポジトリクリーンアップを実行"""
         # プログレスダイアログを表示
         operation = "Dry Run Repository Cleanup" if dry_run else "Repository Cleanup"
-        progress_dialog = ProgressDialog(operation, "Scanning for orphaned files...")
+        progress_dialog = ProgressDialog(
+            operation, "Scanning for orphaned and excluded files..."
+        )
         self.app.push_screen(progress_dialog)
 
         try:
@@ -1296,7 +1299,7 @@ class MainScreen(Static):
                     await self.app.push_screen(
                         MessageDialog(
                             "Dry Run Results",
-                            "No orphaned files found in repository.",
+                            "No orphaned, stale, or excluded files found in repository.",
                             "success",
                         )
                     )
@@ -1344,7 +1347,7 @@ class MainScreen(Static):
                     await self.app.push_screen(
                         MessageDialog(
                             "Repository Cleanup Complete",
-                            "No orphaned files found in repository.",
+                            "No orphaned, stale, or excluded files found in repository.",
                             "success",
                         )
                     )

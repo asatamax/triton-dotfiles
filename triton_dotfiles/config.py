@@ -594,7 +594,11 @@ class ConfigManager:
         return False
 
     def is_file_too_large(self, file_path: Path) -> bool:
-        """ファイルサイズが制限を超えているかチェック"""
+        """ファイルサイズが制限を超えているかチェック（0以下は制限なし）"""
+        # validate_config() の表示と同じく、0以下は制限なしとして扱う
+        if self.config.max_file_size_mb <= 0:
+            return False
+
         try:
             if not file_path.exists() or not file_path.is_file():
                 return False

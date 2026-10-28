@@ -502,7 +502,7 @@ def export(ctx, source_machine, file_pattern, output_path, no_decrypt, dry_run):
                 click.echo(f"  chmod 600 {output_path}")
 
     except FileNotFoundError as e:
-        click.echo(f"{Fore.RED}Error:{e}{Style.RESET_ALL}")
+        click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
         sys.exit(1)
     except Exception as e:
         click.echo(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
@@ -1035,7 +1035,7 @@ def git_pull(ctx, dry_run):
                     if line.strip():
                         click.echo(f"  {line}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             if result["error"]:
                 click.echo(f"{Fore.RED}Error:{Style.RESET_ALL}")
                 for line in result["error"].strip().split("\n"):
@@ -1098,7 +1098,7 @@ def git_commit_push(ctx, machine, dry_run, yes):
         else:
             # Special handling when pull is required
             if result.get("need_pull", False):
-                click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+                click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
                 click.echo(
                     f"{Fore.YELLOW}Warning: The remote repository has newer changes.{Style.RESET_ALL}"
                 )
@@ -1108,7 +1108,7 @@ def git_commit_push(ctx, machine, dry_run, yes):
                         f"Remote is ahead by {result['commits_behind']} commit(s)."
                     )
             else:
-                click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+                click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
                 if result["output"]:
                     click.echo(f"{Fore.CYAN}Output:{Style.RESET_ALL}")
                     for line in result["output"].strip().split("\n"):
@@ -1155,10 +1155,12 @@ def tui(ctx, skip_startup):
 )
 @click.pass_context
 def cleanup_repository(ctx, machine, dry_run):
-    """Remove orphaned files from repository (current machine only).
+    """Remove orphaned and excluded files from repository (current machine only).
 
     This command deletes files that exist in the repository but not
-    on the local system. Only executable for the current machine.
+    on the local system, files the current config no longer backs up
+    (pattern exclusion or global blacklist), and stale counterparts left
+    by encryption status changes. Only executable for the current machine.
 
     Examples:
       triton cleanup-repository --dry-run  # Check files to be deleted
@@ -1202,14 +1204,15 @@ def cleanup_repository(ctx, machine, dry_run):
         # Confirmation prompt (not needed for dry-run)
         if not dry_run:
             click.echo(
-                f"\n{Fore.YELLOW}Warning: This will delete orphaned files from repository{Style.RESET_ALL}"
+                f"\n{Fore.YELLOW}Warning: This will delete orphaned and excluded files from repository{Style.RESET_ALL}"
             )
             click.echo(f"Machine: {Fore.CYAN}{target_machine}{Style.RESET_ALL}")
             click.echo(
                 f"Repository: {Fore.CYAN}{file_manager.repo_root}{Style.RESET_ALL}"
             )
             click.echo(
-                f"\n{Fore.RED}Files that exist in repository but not locally will be PERMANENTLY deleted.{Style.RESET_ALL}"
+                f"\n{Fore.RED}Files that exist in repository but not locally, or that the "
+                f"current config no longer backs up, will be PERMANENTLY deleted.{Style.RESET_ALL}"
             )
 
             if not click.confirm("Continue with cleanup?"):
@@ -1235,7 +1238,9 @@ def cleanup_repository(ctx, machine, dry_run):
                     f"\n{Fore.GREEN}Run without --dry-run to actually delete these files{Style.RESET_ALL}"
                 )
             else:
-                click.echo(f"{Fore.GREEN}No orphaned files found{Style.RESET_ALL}")
+                click.echo(
+                    f"{Fore.GREEN}No orphaned, stale, or excluded files found{Style.RESET_ALL}"
+                )
         else:
             click.echo(f"\n{Fore.GREEN}Repository cleanup completed!{Style.RESET_ALL}")
             click.echo(f"Files deleted: {len(results['deleted'])}")
@@ -1251,12 +1256,12 @@ def cleanup_repository(ctx, machine, dry_run):
                 repo_path = file_manager.repo_root
                 click.echo(f"  git -C {repo_path} add .")
                 click.echo(
-                    f'  git -C {repo_path} commit -m "cleanup({target_machine}): remove orphaned files"'
+                    f'  git -C {repo_path} commit -m "cleanup({target_machine}): remove orphaned and excluded files"'
                 )
                 click.echo(f"  git -C {repo_path} push")
                 click.echo(f"\n{Fore.YELLOW}Or as one-liner:{Style.RESET_ALL}")
                 click.echo(
-                    f'  (cd {repo_path} && git add . && git commit -m "cleanup({target_machine}): remove orphaned files" && git push)'
+                    f'  (cd {repo_path} && git add . && git commit -m "cleanup({target_machine}): remove orphaned and excluded files" && git push)'
                 )
 
     except ValueError as e:
@@ -1617,7 +1622,7 @@ def hook_add(ctx, command, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -1648,7 +1653,7 @@ def hook_remove(ctx, command, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -1677,7 +1682,7 @@ def hook_timeout(ctx, seconds, no_backup):
             if result.get("backup_path"):
                 click.echo(f"  Config backup: {result['backup_path']}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -1762,7 +1767,7 @@ def exclude_add(ctx, pattern, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -1793,7 +1798,7 @@ def exclude_remove(ctx, pattern, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -1878,7 +1883,7 @@ def encrypt_add(ctx, pattern, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -1909,7 +1914,7 @@ def encrypt_remove(ctx, pattern, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -2004,7 +2009,7 @@ def settings_get(ctx, key, as_json):
         result = config_manager.get_setting(key)
 
         if not result["success"]:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             if result.get("available_keys"):
                 click.echo(f"\nAvailable keys: {', '.join(result['available_keys'])}")
             sys.exit(1)
@@ -2062,7 +2067,7 @@ def settings_set(ctx, key, value, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             if result.get("available_keys"):
                 click.echo(f"\nAvailable keys: {', '.join(result['available_keys'])}")
             sys.exit(1)
@@ -2100,7 +2105,7 @@ def settings_unset(ctx, key, no_backup):
             else:
                 click.echo(f"{Fore.YELLOW}✓ {result['message']}{Style.RESET_ALL}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             if result.get("available_keys"):
                 click.echo(f"\nAvailable keys: {', '.join(result['available_keys'])}")
             sys.exit(1)
@@ -2360,7 +2365,7 @@ def target_add(ctx, path, files, recursive, encrypt_files, no_backup, as_json):
             if target.encrypt_files:
                 click.echo(f"   Encrypt files: {target.encrypt_files}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:
@@ -2410,7 +2415,7 @@ def target_remove(ctx, path, no_backup, yes):
             if result.get("backup_path"):
                 click.echo(f"   Config backed up to: {result['backup_path']}")
         else:
-            click.echo(f"{Fore.RED}Error:{result['message']}{Style.RESET_ALL}")
+            click.echo(f"{Fore.RED}Error: {result['message']}{Style.RESET_ALL}")
             sys.exit(1)
 
     except Exception as e:

@@ -76,6 +76,30 @@ class PatternMatchResult:
     would_backup: int = 0
 
 
+# ファイル収集判定の結果種別（backup/cleanup共通）
+DECISION_INCLUDED = "included"
+DECISION_BLACKLISTED = "blacklisted"
+DECISION_EXCLUDED = "excluded"
+# cleanup専用: 設定パターンでは判断できないため削除理由にしない
+# （暗号化無効時のencrypt_list、通常ファイルでないdirect path）
+DECISION_SKIPPED = "skipped"
+
+
+@dataclass
+class TargetScope:
+    """cleanup時の除外判定用に1回だけ事前計算するtarget情報"""
+
+    target: Any
+    expanded_path: Path
+    backup_prefix: tuple[str, ...]  # マシンディレクトリからのバックアップ先（パス要素）
+    # 解決後の相対パス → collect_target_files() Phase 1と同じ正規化の表記
+    direct_paths: dict[Path, str]
+    # target外へ出る（".."で始まる）direct pathのバックアップ先 → Phase 1の表記
+    escaping_destinations: dict[Path, str]
+    glob_patterns: list[str]
+    unresolved: bool  # 未定義の環境変数を含む
+
+
 def separate_patterns(patterns: List[str]) -> Tuple[List[str], List[str]]:
     """
     パターンリストをinclusionとexclusionに分離
@@ -545,99 +569,91 @@ class FileManager:
         if target.recursive:
             # 再帰的にファイルを収集（skip_dirsでディレクトリ刈り込み）
             skip_dirs = frozenset(self.config_manager.config.skip_dirs)
-            for file_path in self._walk_recursive(expanded_path, skip_dirs):
-                # Skip if already processed as direct path
-                if file_path in yielded_paths:
-                    continue
-
-                if match_result:
-                    match_result.total_scanned += 1
-
-                relative_path = file_path.relative_to(expanded_path)
-
-                # Priority 1: Global blacklist (absolute rule - cannot override)
-                blacklist_match = self._check_blacklist_match(file_path)
-                if blacklist_match:
-                    if match_result:
-                        match_result.blacklist_blocked.append(
-                            (str(relative_path), blacklist_match)
-                        )
-                    continue
-
-                # Priority 2 & 3: Sequential pattern evaluation (re-inclusion対応)
-                if has_glob_patterns:
-                    included, matched_pattern = evaluate_patterns_sequential(
-                        relative_path, glob_patterns
-                    )
-
-                    if not included:
-                        if matched_pattern and match_result:
-                            # 除外パターンにマッチした場合のみ記録
-                            match_result.pattern_excluded.append(
-                                (str(relative_path), matched_pattern)
-                            )
-                        continue
-
-                    # File passed all filters
-                    if match_result:
-                        match_result.pattern_matched.append(
-                            (str(relative_path), matched_pattern or "**/*")
-                        )
-                        match_result.would_backup += 1
-                else:
-                    # パターンが空の場合は全ファイルを収集
-                    if match_result:
-                        match_result.pattern_matched.append(
-                            (str(relative_path), "**/*")
-                        )
-                        match_result.would_backup += 1
-
-                yield file_path, str(relative_path)
+            candidates = self._walk_recursive(expanded_path, skip_dirs)
         else:
             # 非再帰モード: 指定されたディレクトリ直下のファイルのみ
-            # 直下のファイルを取得して順序評価を適用
-            for file_path in expanded_path.iterdir():
-                if not file_path.is_file():
-                    continue
+            candidates = (p for p in expanded_path.iterdir() if p.is_file())
 
-                # Skip if already processed as direct path
-                if file_path in yielded_paths:
-                    continue
+        for file_path in candidates:
+            # Skip if already processed as direct path
+            if file_path in yielded_paths:
+                continue
 
+            if match_result:
+                match_result.total_scanned += 1
+
+            relative_path = file_path.relative_to(expanded_path)
+
+            decision, matched_pattern = self._classify_scanned_file(
+                file_path, relative_path, glob_patterns, target.recursive
+            )
+
+            if decision == DECISION_BLACKLISTED:
                 if match_result:
-                    match_result.total_scanned += 1
-
-                relative_path = file_path.relative_to(expanded_path)
-
-                # Global blacklist check
-                blacklist_match = self._check_blacklist_match(file_path)
-                if blacklist_match:
-                    if match_result:
-                        match_result.blacklist_blocked.append(
-                            (str(relative_path), blacklist_match)
-                        )
-                    continue
-
-                # Sequential pattern evaluation (re-inclusion対応)
-                if has_glob_patterns:
-                    included, matched_pattern = evaluate_patterns_sequential(
-                        relative_path, glob_patterns
+                    match_result.blacklist_blocked.append(
+                        (str(relative_path), matched_pattern)
                     )
+                continue
 
-                    if not included:
-                        if matched_pattern and match_result:
-                            match_result.pattern_excluded.append(
-                                (str(relative_path), matched_pattern)
-                            )
-                        continue
+            if decision == DECISION_EXCLUDED:
+                if matched_pattern and match_result:
+                    # 除外パターンにマッチした場合のみ記録
+                    match_result.pattern_excluded.append(
+                        (str(relative_path), matched_pattern)
+                    )
+                continue
 
-                    if match_result:
-                        match_result.pattern_matched.append(
-                            (str(relative_path), matched_pattern or "*")
-                        )
-                        match_result.would_backup += 1
+            # File passed all filters
+            if match_result:
+                match_result.pattern_matched.append(
+                    (str(relative_path), matched_pattern)
+                )
+                match_result.would_backup += 1
 
-                    yield file_path, str(relative_path)
+            yield file_path, str(relative_path)
+
+    def _classify_scanned_file(
+        self,
+        file_path: Path,
+        relative_path: Path,
+        glob_patterns: list[str],
+        recursive: bool,
+    ) -> tuple[str, str | None]:
+        """走査で見つかったファイルを収集するかを設定パターンで判定（backup/cleanup共通）
+
+        評価順序:
+        1. グローバルblacklist（上書き不可）
+        2. globパターンの順序評価（最後にマッチしたパターンが勝つ、re-inclusion対応）
+        3. パターンが空の場合、再帰モードは全ファイル収集、非再帰モードは何も収集しない
+
+        Args:
+            file_path: チェック対象のファイルパス（絶対パス）
+            relative_path: targetのpathからの相対パス
+            glob_patterns: targetのglobパターン（direct pathを除いたもの）
+            recursive: targetが再帰モードかどうか
+
+        Returns:
+            (decision, matched_pattern)。decisionは DECISION_INCLUDED /
+            DECISION_BLACKLISTED / DECISION_EXCLUDED のいずれか。
+        """
+        blacklist_match = self._check_blacklist_match(file_path)
+        if blacklist_match:
+            return DECISION_BLACKLISTED, blacklist_match
+
+        default_pattern = "**/*" if recursive else "*"
+
+        if glob_patterns:
+            included, matched_pattern = evaluate_patterns_sequential(
+                relative_path, glob_patterns
+            )
+            if not included:
+                return DECISION_EXCLUDED, matched_pattern
+            return DECISION_INCLUDED, matched_pattern or default_pattern
+
+        if recursive:
+            return DECISION_INCLUDED, default_pattern
+
+        return DECISION_EXCLUDED, None
 
     def _check_blacklist_match(self, file_path: Path) -> Optional[str]:
         """
@@ -703,16 +719,7 @@ class FileManager:
                 )
 
             # バックアップ先のベースディレクトリを決定
-            if str(expanded_path) == str(Path.home()):
-                base_backup_dir = backup_dir
-            else:
-                # ~/.ssh → .ssh のように変換
-                home_str = str(Path.home())
-                if str(expanded_path).startswith(home_str):
-                    relative_path = str(expanded_path)[len(home_str) :].lstrip("/")
-                else:
-                    relative_path = expanded_path.name
-                base_backup_dir = backup_dir / relative_path
+            base_backup_dir = backup_dir / self._target_backup_subdir(expanded_path)
 
             # dry-run時はパターンマッチング結果を収集
             match_result = PatternMatchResult() if dry_run else None
@@ -727,6 +734,19 @@ class FileManager:
                 if self.is_system_protected_path(source_file):
                     print(f"  System protected (skipped): {relative_path}")
                     results["skipped"].append(f"System protected: {relative_path}")
+                    continue
+
+                # ファイルサイズ制限（パターン判定ではないため収集後に判定する）
+                if self.config_manager.is_file_too_large(source_file):
+                    limit_mb = self.config_manager.config.max_file_size_mb
+                    size_mb = self.config_manager.get_file_size_mb(source_file)
+                    print(
+                        f"  {Fore.YELLOW}Warning: Skipped (exceeds {limit_mb}MB limit): "
+                        f"{relative_path} ({size_mb:.1f}MB){Style.RESET_ALL}"
+                    )
+                    results["skipped"].append(
+                        f"Exceeds {limit_mb}MB limit: {relative_path} ({size_mb:.1f}MB)"
+                    )
                     continue
 
                 # ファイルが暗号化対象かどうかを判定（target.encrypt_filesを優先）
@@ -790,7 +810,7 @@ class FileManager:
                                 print(f"  Encrypted: {relative_path}")
                             else:
                                 error_msg = f"Encryption enabled but no key available for {source_file}"
-                                print(f"  Error:{error_msg}")
+                                print(f"  Error: {error_msg}")
                                 results["errors"].append(error_msg)
                                 continue
                         else:
@@ -810,7 +830,7 @@ class FileManager:
 
                 except Exception as e:
                     error_msg = f"Error processing {source_file}: {e}"
-                    print(f"  Error:{error_msg}")
+                    print(f"  Error: {error_msg}")
                     results["errors"].append(error_msg)
 
             # dry-run時にパターンマッチング結果のサマリーを表示
@@ -831,7 +851,7 @@ class FileManager:
 
         # Pattern excluded
         if match_result.pattern_excluded:
-            print(f"\n   Error:{Fore.YELLOW}Excluded by pattern:{Style.RESET_ALL}")
+            print(f"\n   {Fore.YELLOW}Excluded by pattern:{Style.RESET_ALL}")
             for file_path, pattern in match_result.pattern_excluded[:5]:
                 print(f"      • {file_path} (matched: {pattern})")
             if len(match_result.pattern_excluded) > 5:
@@ -918,15 +938,7 @@ class FileManager:
             expanded_path = self.config_manager.expand_path(target.path)
 
             # バックアップ元のベースディレクトリを決定
-            if str(expanded_path) == str(Path.home()):
-                base_backup_dir = backup_dir
-            else:
-                home_str = str(Path.home())
-                if str(expanded_path).startswith(home_str):
-                    relative_path = str(expanded_path)[len(home_str) :].lstrip("/")
-                else:
-                    relative_path = expanded_path.name
-                base_backup_dir = backup_dir / relative_path
+            base_backup_dir = backup_dir / self._target_backup_subdir(expanded_path)
 
             if not base_backup_dir.exists():
                 continue
@@ -987,12 +999,12 @@ class FileManager:
                                     )
                                 except Exception as e:
                                     error_msg = f"Error decrypting {backup_file}: {e}"
-                                    print(f"  Error:{error_msg}")
+                                    print(f"  Error: {error_msg}")
                                     results["errors"].append(error_msg)
                                     continue
                             else:
                                 error_msg = f"Encrypted file found but no decryption key for {backup_file}"
-                                print(f"  Error:{error_msg}")
+                                print(f"  Error: {error_msg}")
                                 results["errors"].append(error_msg)
                                 continue
                         else:
@@ -1012,7 +1024,7 @@ class FileManager:
 
                 except Exception as e:
                     error_msg = f"Error restoring {backup_file}: {e}"
-                    print(f"  Error:{error_msg}")
+                    print(f"  Error: {error_msg}")
                     results["errors"].append(error_msg)
 
         return restore_archive_root
@@ -1114,12 +1126,12 @@ class FileManager:
                                 print(f"  Decrypted and restored: {relative_path}")
                             except Exception as e:
                                 error_msg = f"Error decrypting {backup_file}: {e}"
-                                print(f"  Error:{error_msg}")
+                                print(f"  Error: {error_msg}")
                                 results["errors"].append(error_msg)
                                 continue
                         else:
                             error_msg = f"Encrypted file found but no decryption key for {backup_file}"
-                            print(f"  Error:{error_msg}")
+                            print(f"  Error: {error_msg}")
                             results["errors"].append(error_msg)
                             continue
                     else:
@@ -1137,7 +1149,7 @@ class FileManager:
 
             except Exception as e:
                 error_msg = f"Error restoring {backup_file}: {e}"
-                print(f"  Error:{error_msg}")
+                print(f"  Error: {error_msg}")
                 results["errors"].append(error_msg)
 
         return restore_archive_root
@@ -1526,11 +1538,14 @@ class FileManager:
     def cleanup_repository_files(
         self, machine_name: str, dry_run: bool = False
     ) -> Dict[str, List[str]]:
-        """リポジトリから孤立ファイルと暗号化ステータス変更による重複ファイルを削除
+        """リポジトリから孤立ファイル・除外ファイル・暗号化ステータス変更による重複ファイルを削除
 
-        検出対象:
+        検出対象（この順で判定）:
         1. 孤立ファイル: ローカルに存在しないファイル
-        2. Staleファイル: 暗号化ステータス変更で不要になった旧形式ファイル
+        2. 除外ファイル: ローカルに存在するが、現在の設定パターン
+           （targetのfiles、!除外、グローバルblacklist）ではバックアップされないファイル。
+           どのtargetの範囲にも入らないファイルは対象外（保持）
+        3. Staleファイル: 暗号化ステータス変更で不要になった旧形式ファイル
            (例: .envと.env.encの両方がリポジトリに存在する場合)
 
         Args:
@@ -1575,11 +1590,13 @@ class FileManager:
 
         # リポジトリ内のファイルを確認
         orphaned_files = []
+        excluded_files = []
         stale_files = []
         stale_checked = set()  # 重複検知済みペアを記録
 
-        # パフォーマンス最適化: targetのマッピングを事前に構築
+        # パフォーマンス最適化: targetのマッピングと判定用情報を事前に構築
         target_mappings = self._build_target_mappings()
+        target_scopes = self._build_target_scopes()
 
         for repo_file in backup_dir.rglob("*"):
             if not repo_file.is_file():
@@ -1602,32 +1619,65 @@ class FileManager:
                 else local_file_path
             )
 
+            encrypted_info = " [encrypted]" if repo_file.suffix == ".enc" else ""
+
+            # このリポジトリパスへバックアップしうるtargetのうち、ローカルに存在する候補
+            candidates = self._repo_file_candidates(
+                repo_file, relative_path, target_scopes
+            )
+
+            # 未定義の環境変数を含むtargetが該当する場合は判定できないため、どの規則でも削除しない
+            if any(scope.unresolved for scope, _path in candidates):
+                if dry_run:
+                    print(
+                        f"Kept: {relative_path}{encrypted_info} "
+                        f"(target has undefined environment variables)"
+                    )
+                continue
+
+            existing = [(scope, path) for scope, path in candidates if path.exists()]
+            if existing:
+                actual_local_path = existing[0][1]
+
             # ローカルファイルが存在しない場合は孤立ファイル
-            if not actual_local_path.exists():
+            # （どのtargetにも該当しない場合は従来のホーム直下へのフォールバックで判定）
+            is_orphaned = not existing if candidates else not actual_local_path.exists()
+            if is_orphaned:
                 orphaned_files.append((repo_file, relative_path, actual_local_path))
-                encrypted_info = " [encrypted]" if repo_file.suffix == ".enc" else ""
                 print(
                     f"  Orphaned: {relative_path}{encrypted_info} (local: {actual_local_path})"
                 )
-            else:
-                # Stale counterpart検知: 暗号化ステータス変更による重複
-                stale_counterpart = self._detect_stale_counterpart(
-                    repo_file,
-                    relative_path,
-                    actual_local_path,
-                    backup_dir,
-                    stale_checked,
+                continue
+
+            verdicts = [
+                (scope, path, self._evaluate_target_scope(scope, path))
+                for scope, path in existing
+            ]
+
+            # 現在の設定ではバックアップされないファイル
+            excluded, matched_pattern = self._detect_config_exclusion(verdicts)
+            if excluded:
+                excluded_files.append((repo_file, relative_path))
+                pattern_info = (
+                    f", matched: {matched_pattern}" if matched_pattern else ""
                 )
-                if stale_counterpart:
-                    stale_file, stale_relative, reason = stale_counterpart
-                    stale_files.append((stale_file, stale_relative, reason))
-                elif dry_run:
-                    encrypted_info = (
-                        " [encrypted]" if repo_file.suffix == ".enc" else ""
-                    )
-                    print(
-                        f"Exists: {relative_path}{encrypted_info} (local: {actual_local_path})"
-                    )
+                print(
+                    f"  Excluded: {relative_path}{encrypted_info} "
+                    f"(no longer matched by config{pattern_info})"
+                )
+                continue
+
+            # Stale counterpart検知: 暗号化ステータス変更による重複
+            stale_counterpart = self._detect_stale_counterpart(
+                repo_file, backup_dir, stale_checked, verdicts
+            )
+            if stale_counterpart:
+                stale_file, stale_relative, reason = stale_counterpart
+                stale_files.append((stale_file, stale_relative, reason))
+            elif dry_run:
+                print(
+                    f"Exists: {relative_path}{encrypted_info} (local: {actual_local_path})"
+                )
 
         # 結果を統合して表示
         files_to_delete = []
@@ -1638,6 +1688,17 @@ class FileManager:
             )
             files_to_delete.extend((f, rp, "orphaned") for f, rp, _ in orphaned_files)
 
+        if excluded_files:
+            print(
+                f"\n{Fore.YELLOW}Found {len(excluded_files)} excluded file(s) "
+                f"(no longer backed up by current config){Style.RESET_ALL}"
+            )
+            files_to_delete.extend((f, rp, "excluded") for f, rp in excluded_files)
+
+        # 除外ファイルとして既に削除予定のものはstaleとして二重計上しない
+        scheduled = {f for f, _, _ in files_to_delete}
+        stale_files = [entry for entry in stale_files if entry[0] not in scheduled]
+
         if stale_files:
             print(
                 f"\n{Fore.YELLOW}Found {len(stale_files)} stale file(s) "
@@ -1647,7 +1708,7 @@ class FileManager:
 
         if not files_to_delete:
             print(
-                f"{Fore.GREEN}No orphaned or stale files found in repository{Style.RESET_ALL}"
+                f"{Fore.GREEN}No orphaned, stale, or excluded files found in repository{Style.RESET_ALL}"
             )
             print(
                 f"Scanned {sum(1 for _ in backup_dir.rglob('*') if _.is_file())} files in total"
@@ -1670,7 +1731,7 @@ class FileManager:
                 results["deleted"].append(str(relative_path))
             except Exception as e:
                 error_msg = f"Error deleting {relative_path}: {e}"
-                print(f"  Error:{error_msg}")
+                print(f"  Error: {error_msg}")
                 results["errors"].append(error_msg)
 
         # 空のディレクトリも削除
@@ -1678,18 +1739,202 @@ class FileManager:
 
         return results
 
-    def _detect_stale_counterpart(
+    def _target_backup_subdir(self, expanded_path: Path) -> str:
+        """targetのバックアップ先をマシンディレクトリからの相対パスで返す（backup/restore/cleanup共通）
+
+        - ホームディレクトリ: マシンディレクトリ直下（空文字）
+        - ホーム配下: ホームからの相対パス（~/.ssh → .ssh）
+        - ホーム外: ディレクトリ名のみ（/opt/dots → dots）
+        """
+        home_str = str(Path.home())
+        if str(expanded_path) == home_str:
+            return ""
+        if str(expanded_path).startswith(home_str):
+            return str(expanded_path)[len(home_str) :].lstrip("/")
+        return expanded_path.name
+
+    def _build_target_scopes(self) -> list[TargetScope]:
+        """除外判定用のtarget情報を事前に構築（パフォーマンス最適化）"""
+        scopes = []
+
+        for target in self.config_manager.config.targets:
+            expanded_path = self.config_manager.expand_path(target.path)
+            direct_paths, glob_patterns = separate_direct_and_pattern_files(
+                target.files or []
+            )
+            backup_subdir = self._target_backup_subdir(expanded_path)
+            # collect_target_files() Phase 1と同じ正規化。".."はバックアップ先で
+            # ファイルシステムが解決するため、キーはnormpathで解決後のパスにする
+            normalized = [p.replace("\\", "/") for p in direct_paths]
+            resolved = {Path(os.path.normpath(p)): p for p in normalized}
+            # target外へ出るdirect pathはプレフィックスでは辿れないため、
+            # 解決後のバックアップ先から逆引きできるようにする
+            escaping = {
+                Path(os.path.normpath(Path(backup_subdir) / rel)): p
+                for rel, p in resolved.items()
+                if rel.parts and rel.parts[0] == ".."
+            }
+            scopes.append(
+                TargetScope(
+                    target=target,
+                    expanded_path=expanded_path,
+                    backup_prefix=Path(backup_subdir).parts,
+                    direct_paths=resolved,
+                    escaping_destinations=escaping,
+                    glob_patterns=glob_patterns,
+                    unresolved=self.config_manager.should_skip_target(target),
+                )
+            )
+
+        return scopes
+
+    def _repo_file_candidates(
         self,
         repo_file: Path,
         relative_path: Path,
-        actual_local_path: Path,
+        target_scopes: list[TargetScope],
+    ) -> list[tuple[TargetScope, Path]]:
+        """リポジトリのファイルへバックアップしうるtargetと、対応するローカルパスを列挙
+
+        バックアップ先の決定規則（_target_backup_subdir）を逆にたどる。シンボリックリンクで
+        同一実体を指すtargetや、同名ディレクトリへバックアップされるホーム外targetなど、
+        複数のtargetが同じリポジトリパスに対応しうるため、該当するものをすべて返す。
+
+        Args:
+            repo_file: リポジトリ内のファイルパス
+            relative_path: マシンディレクトリからの相対パス
+            target_scopes: _build_target_scopes() で構築したtarget情報
+
+        Returns:
+            (scope, local_path) のリスト。暗号化ファイルは .enc を除いたパス。
+            target外へ出るdirect pathの候補は Phase 1 と同じ表記（target/../file）。
+            ローカルの存在確認は呼び出し側で行う。
+        """
+        candidates = []
+        repo_parts = relative_path.parts
+        is_encrypted = repo_file.suffix == ".enc"
+        plain_relative = (
+            relative_path.with_suffix("") if is_encrypted else relative_path
+        )
+
+        for scope in target_scopes:
+            prefix = scope.backup_prefix
+            if repo_parts[: len(prefix)] == prefix and len(repo_parts) > len(prefix):
+                local_path = scope.expanded_path.joinpath(*repo_parts[len(prefix) :])
+                if is_encrypted:
+                    local_path = local_path.with_suffix("")
+                candidates.append((scope, local_path))
+
+            direct_path = scope.escaping_destinations.get(plain_relative)
+            if direct_path is not None:
+                candidates.append((scope, scope.expanded_path / direct_path))
+
+        return candidates
+
+    def _detect_config_exclusion(
+        self,
+        verdicts: list[tuple[TargetScope, Path, tuple[str, str | None] | None]],
+    ) -> tuple[bool, str | None]:
+        """リポジトリのファイルが現在の設定パターンでバックアップされなくなったかを判定
+
+        ローカルに存在する候補が範囲内に1つ以上あり、そのすべてが設定パターンによって
+        収集しない（blacklist / パターン不一致 / !除外）場合のみ除外とみなす。
+
+        Args:
+            verdicts: ローカルに存在する候補ごとの (scope, local_path, _evaluate_target_scope()の結果)
+
+        Returns:
+            (excluded, matched_pattern): 除外かどうかと、判定に使われたパターン（不明ならNone）
+        """
+        in_scope = False
+        deciding_pattern = None
+
+        for _scope, _path, verdict in verdicts:
+            if verdict is None:
+                continue
+
+            decision, matched_pattern = verdict
+            if decision not in (DECISION_BLACKLISTED, DECISION_EXCLUDED):
+                return False, None
+
+            in_scope = True
+            if deciding_pattern is None:
+                deciding_pattern = matched_pattern
+
+        return in_scope, deciding_pattern
+
+    def _evaluate_target_scope(
+        self, scope: TargetScope, local_path: Path
+    ) -> tuple[str, str | None] | None:
+        """1つのtargetについて、ローカルファイルをバックアップ時と同じ規則で判定
+
+        Returns:
+            targetの範囲外ならNone。範囲内なら (decision, matched_pattern)。
+            設定パターンで判断できない場合は DECISION_SKIPPED。
+        """
+        relative_path = local_path.relative_to(scope.expanded_path)
+
+        target = scope.target
+
+        # collect_target_files() Phase 1: direct pathはblacklistのみで判定
+        direct_path = scope.direct_paths.get(relative_path)
+        if direct_path is not None:
+            # Phase 1と同じく設定上の表記のままアクセスする
+            direct_file = scope.expanded_path / direct_path
+            if not direct_file.is_file():
+                return DECISION_SKIPPED, None
+            blacklist_match = self._check_blacklist_match(direct_file)
+            if blacklist_match:
+                return self._blacklist_verdict(direct_file, blacklist_match)
+            return DECISION_INCLUDED, f"direct:{direct_path}"
+
+        # direct pathのみのtargetは走査しない（collect_target_files()と同じ）
+        if not scope.glob_patterns and scope.direct_paths:
+            return None
+
+        # 非再帰モードは直下のファイルのみが範囲
+        if not target.recursive and len(relative_path.parts) != 1:
+            return None
+
+        decision, matched_pattern = self._classify_scanned_file(
+            local_path, relative_path, scope.glob_patterns, target.recursive
+        )
+        if decision == DECISION_BLACKLISTED:
+            return self._blacklist_verdict(local_path, matched_pattern)
+
+        return decision, matched_pattern
+
+    def _blacklist_verdict(
+        self, local_path: Path, matched_pattern: str | None
+    ) -> tuple[str, str | None]:
+        """blacklist判定のうち、グローバルblacklist由来のものだけを除外として扱う
+
+        should_exclude() は暗号化無効時のencrypt_listも除外するが、
+        これは暗号化設定に依存する一時的な状態のため削除理由にしない。
+        """
+        if self.config_manager.is_blacklisted(local_path):
+            return DECISION_BLACKLISTED, matched_pattern
+        return DECISION_SKIPPED, None
+
+    def _detect_stale_counterpart(
+        self,
+        repo_file: Path,
         backup_dir: Path,
         stale_checked: set,
+        verdicts: list[tuple[TargetScope, Path, tuple[str, str | None] | None]],
     ) -> Optional[tuple]:
         """暗号化ステータス変更による stale counterpart を検知
 
         リポジトリに .env と .env.enc の両方が存在する場合、
-        should_encrypt_file() の結果に基づいて不要な方を特定する。
+        実際にこのファイルをバックアップするtarget（ローカルに存在し、収集対象と
+        判定された候補）の should_encrypt_file() に基づいて不要な方を特定する。
+        該当targetがない、または複数のtargetで判定が食い違う場合は両方を残す。
+
+        Args:
+            repo_file: リポジトリ内のファイルパス
+            backup_dir: マシンのバックアップディレクトリ
+            stale_checked: 処理済みペアの記録
+            verdicts: ローカルに存在する候補ごとの (scope, local_path, 判定結果)
 
         Returns:
             (stale_file, stale_relative_path, reason) or None
@@ -1711,22 +1956,19 @@ class FileManager:
             return None
         stale_checked.add(pair_key)
 
-        # should_encrypt_file でどちらが正しいか判定
-        target = self.config_manager._find_deepest_ancestor_target(
-            str(actual_local_path)
-        )
-        if target is None:
+        # バックアップ時と同じtargetの should_encrypt_file でどちらが正しいか判定
+        decisions = {
+            self.config_manager.should_encrypt_file(
+                local_path,
+                scope.target,
+                local_path.relative_to(scope.expanded_path),
+            )
+            for scope, local_path, verdict in verdicts
+            if verdict is not None and verdict[0] == DECISION_INCLUDED
+        }
+        if len(decisions) != 1:
             return None
-
-        expanded_target_path = self.config_manager.expand_path(target.path)
-        try:
-            target_relative = actual_local_path.relative_to(expanded_target_path)
-        except ValueError:
-            return None
-
-        should_encrypt = self.config_manager.should_encrypt_file(
-            actual_local_path, target, target_relative
-        )
+        should_encrypt = decisions.pop()
 
         # stale側を特定（現在のファイルかcounterpartか、走査順に依存しない）
         if should_encrypt:
